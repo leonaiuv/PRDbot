@@ -60,6 +60,11 @@ export default function PRDPage() {
     loadPersistedTask,
   } = usePRDGenerationStore();
   const prdTask = usePRDGenerationStore(state => state.tasks[projectId]);
+  // getTask 在 effect 中使用，放入 ref 避免依赖数组长度变化
+  const getTaskRef = useRef(getTask);
+  useEffect(() => {
+    getTaskRef.current = getTask;
+  }, [getTask]);
   
   // 本地状态（用于对话流式响应，与PRD生成分离）
   const [isStreaming, setIsStreaming] = useState(false);
@@ -102,11 +107,21 @@ export default function PRDPage() {
   // 检查并恢复中断的任务
   useEffect(() => {
     if (!mounted || !currentProject) return;
+
+    // 如果内存中已有正在进行的生成任务，避免被误判为中断
+    const activeTask = getTaskRef.current(projectId);
+    if (activeTask?.phase === 'generating') return;
     
     const checkAndRestoreTask = async () => {
       // 检查是否有持久化的中断任务
       const persisted = await loadPersistedTask(projectId);
       if (persisted && (persisted.phase === 'generating' || persisted.phase === 'error')) {
+        // 再次检查是否已经启动了新的生成任务，避免竞态覆盖
+        const latestTask = getTaskRef.current(projectId);
+        if (latestTask?.phase === 'generating' && latestTask.startTime >= persisted.startTime) {
+          return;
+        }
+
         // P3: 边界条件修复 - 检查项目是否有完整内容
         // 使用更严格的判断：内容必须存在且有实质性内容（至少 50 个字符）
         const hasValidContent = currentProject.prdContent && 
