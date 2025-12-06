@@ -462,31 +462,32 @@ export default function ChatPage() {
   return (
     <div className="h-screen flex flex-col">
       {/* 顶部导航 */}
-      <header className="flex-shrink-0 border-b bg-background">
-        <div className="container flex h-14 items-center justify-between">
-          <div className="flex items-center gap-4">
+      <header className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container px-3 sm:px-6 flex h-12 sm:h-14 items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
             <Link href="/">
-              <Button variant="ghost" size="icon">
-                <ArrowLeft className="h-5 w-5" />
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0 touch-feedback">
+                <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
               </Button>
             </Link>
-            <h1 className="font-semibold truncate max-w-[200px] md:max-w-none">
+            <h1 className="font-semibold text-sm sm:text-base truncate">
               {currentProject.name}
             </h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
             <Button
               variant="default"
               size="sm"
               onClick={handleGeneratePRD}
               disabled={currentProject.conversation.length < 4}
+              className="h-8 sm:h-9 text-xs sm:text-sm px-2 sm:px-3 touch-feedback"
             >
-              <Sparkles className="mr-2 h-4 w-4" />
-              生成 PRD
+              <Sparkles className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+              <span className="hidden xs:inline">生成 </span>PRD
             </Button>
             <Link href="/settings">
-              <Button variant="ghost" size="icon">
-                <Settings className="h-5 w-5" />
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 touch-feedback">
+                <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
               </Button>
             </Link>
           </div>
@@ -494,8 +495,8 @@ export default function ChatPage() {
       </header>
 
       {/* 对话区域 */}
-      <ScrollArea className="flex-1 p-4" ref={scrollRef}>
-        <div className="container max-w-3xl space-y-4">
+      <ScrollArea className="flex-1 custom-scrollbar" ref={scrollRef}>
+        <div className="container px-3 sm:px-6 py-3 sm:py-4 max-w-3xl mx-auto space-y-3 sm:space-y-4">
           {currentProject.conversation.map((message) => {
             // AI消息如果内容为空且有选择器数据，则不显示空气泡
             const isEmptyAIMessage = message.role === 'assistant' && 
@@ -510,7 +511,7 @@ export default function ChatPage() {
                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[85%] rounded-lg p-4 ${
+                  className={`max-w-[90%] sm:max-w-[85%] rounded-xl sm:rounded-lg p-3 sm:p-4 transition-all ${
                     message.role === 'user'
                       ? 'bg-primary text-primary-foreground'
                       : 'bg-muted'
@@ -523,7 +524,7 @@ export default function ChatPage() {
                       </ReactMarkdown>
                     </div>
                   ) : (
-                    <p className="whitespace-pre-wrap">{message.content}</p>
+                    <p className="whitespace-pre-wrap text-sm sm:text-base">{message.content}</p>
                   )}
                 </div>
               </div>
@@ -561,7 +562,7 @@ export default function ChatPage() {
 
           {/* 当前选择器 - 受控模式统一渲染 */}
           {generationPhase === 'interactive' && currentSelectors.length > 0 && (
-            <div className="space-y-4">
+            <div className="space-y-3 sm:space-y-4">
               {currentSelectors.map((selector) => (
                 <SmartSelector
                   key={selector.id}
@@ -577,10 +578,10 @@ export default function ChatPage() {
                 <Button
                   onClick={handleSubmitAll}
                   disabled={isStreaming || !hasAnySelection}
-                  className="min-w-[120px]"
+                  className="min-w-[100px] sm:min-w-[120px] h-9 sm:h-10 text-sm touch-feedback"
                 >
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                  提交全部答案
+                  <CheckCircle2 className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+                  提交全部
                   {currentSelectors.length > 1 && (
                     <span className="ml-1 text-xs opacity-75">
                       ({Object.values(selectionsMap).filter(v => v.length > 0).length}/{currentSelectors.length})
@@ -591,7 +592,7 @@ export default function ChatPage() {
               
               {/* 必填项提示 */}
               {!allRequiredFilled && hasAnySelection && (
-                <p className="text-sm text-amber-600 dark:text-amber-400 text-center">
+                <p className="text-xs sm:text-sm text-amber-600 dark:text-amber-400 text-center">
                   还有必填项未完成，请继续填写
                 </p>
               )}
@@ -601,8 +602,8 @@ export default function ChatPage() {
           {/* 错误状态显示 */}
           {generationPhase === 'error' && (
             <div className="flex justify-start">
-              <div className="max-w-[85%] rounded-lg p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
-                <p className="text-sm text-red-600 dark:text-red-400">
+              <div className="max-w-[90%] sm:max-w-[85%] rounded-lg p-3 sm:p-4 bg-red-50 dark:bg-red-950/30 border border-red-200 dark:border-red-800">
+                <p className="text-xs sm:text-sm text-red-600 dark:text-red-400">
                   生成失败，请点击重试或检查网络连接
                 </p>
               </div>
@@ -612,16 +613,16 @@ export default function ChatPage() {
       </ScrollArea>
 
       {/* 输入区域 */}
-      <div className="flex-shrink-0 border-t bg-background p-4">
-        <div className="container max-w-3xl">
+      <div className="flex-shrink-0 border-t bg-background/95 backdrop-blur p-3 sm:p-4 safe-area-inset">
+        <div className="container px-0 sm:px-6 max-w-3xl mx-auto">
           <div className="flex gap-2">
             <Textarea
               ref={textareaRef}
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="输入消息，或使用上方选择器回答问题..."
-              className="min-h-[50px] max-h-[200px] resize-none"
+              placeholder="输入消息..."
+              className="min-h-[44px] sm:min-h-[50px] max-h-[120px] sm:max-h-[200px] resize-none text-sm sm:text-base"
               rows={1}
               disabled={isStreaming}
             />
@@ -629,17 +630,17 @@ export default function ChatPage() {
               onClick={handleSend}
               disabled={!input.trim() || isStreaming}
               size="icon"
-              className="h-[50px] w-[50px]"
+              className="h-[44px] w-[44px] sm:h-[50px] sm:w-[50px] flex-shrink-0 touch-feedback"
             >
               {isStreaming ? (
-                <Loader2 className="h-5 w-5 animate-spin" />
+                <Loader2 className="h-4 w-4 sm:h-5 sm:w-5 animate-spin" />
               ) : (
-                <Send className="h-5 w-5" />
+                <Send className="h-4 w-4 sm:h-5 sm:w-5" />
               )}
             </Button>
           </div>
-          <p className="text-xs text-muted-foreground mt-2 text-center">
-            已回答 {currentProject.metadata.questionCount} 个问题 · 建议回答 10-20 个问题后生成 PRD
+          <p className="text-[10px] sm:text-xs text-muted-foreground mt-2 text-center">
+            已回答 {currentProject.metadata.questionCount} 个问题 · 建议 10-20 个后生成 PRD
           </p>
         </div>
       </div>

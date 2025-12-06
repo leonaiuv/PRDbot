@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, Construction } from 'lucide-react';
+import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, Construction, FileText, AlertCircle, RefreshCcw } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -21,7 +21,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useProjectStore, useSettingsStore } from '@/store';
+import { useProjectStore, useSettingsStore, usePRDGenerationStore } from '@/store';
 import { exportMarkdown } from '@/lib/export';
 import type { ConversationMessage } from '@/types';
 
@@ -41,7 +41,19 @@ export default function PRDPage() {
   const { currentProject, loadProject, addMessage, updatePRDContent, setProjectStatus, isLoading } = useProjectStore();
   const { settings, loadSettings } = useSettingsStore();
   
-  // 使用本地状态管理流式响应，避免与 Chat 页面冲突
+  // 使用全局PRD生成状态管理
+  const { 
+    getTask, 
+    startTask, 
+    appendTaskContent, 
+    completeTask, 
+    errorTask, 
+    updateElapsedTime,
+    clearTask 
+  } = usePRDGenerationStore();
+  const prdTask = usePRDGenerationStore(state => state.tasks[projectId]);
+  
+  // 本地状态（用于对话流式响应，与PRD生成分离）
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamContent, setStreamContent] = useState('');
   const appendStreamContent = useCallback((content: string) => {
@@ -54,11 +66,17 @@ export default function PRDPage() {
   const [input, setInput] = useState('');
   const [mounted, setMounted] = useState(false);
   const [editMode, setEditMode] = useState(false);
-  const [isGenerating, setIsGenerating] = useState(false);
   const [mobileTab, setMobileTab] = useState<'chat' | 'prd'>('chat');
   const scrollViewportRef = useRef<HTMLDivElement>(null);
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const [editorHeight, setEditorHeight] = useState(400);
+  const elapsedTimerRef = useRef<NodeJS.Timeout | null>(null);
+
+  // 从PRD任务状态获取生成中状态
+  const isGenerating = prdTask?.phase === 'generating';
+  const prdTaskContent = prdTask?.streamContent || '';
+  const prdTaskElapsedTime = prdTask?.elapsedTime || 0;
+  const prdTaskError = prdTask?.phase === 'error' ? prdTask.error : undefined;
 
   // 加载项目和设置
   useEffect(() => {
@@ -66,6 +84,28 @@ export default function PRDPage() {
     loadProject(projectId);
     loadSettings();
   }, [projectId, loadProject, loadSettings]);
+
+  // PRD生成计时器
+  useEffect(() => {
+    if (isGenerating) {
+      // 启动已用时间计时器
+      elapsedTimerRef.current = setInterval(() => {
+        updateElapsedTime(projectId);
+      }, 1000);
+    } else {
+      // 非生成状态时清理计时器
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+        elapsedTimerRef.current = null;
+      }
+    }
+    
+    return () => {
+      if (elapsedTimerRef.current) {
+        clearInterval(elapsedTimerRef.current);
+      }
+    };
+  }, [isGenerating, projectId, updateElapsedTime]);
 
   // 聊天区自动滚动到底部
   useEffect(() => {
@@ -100,8 +140,15 @@ export default function PRDPage() {
       return;
     }
 
-    setIsGenerating(true);
-    clearStreamContent();
+    // 检查是否已有生成任务在进行中
+    const existingTask = getTask(projectId);
+    if (existingTask?.phase === 'generating') {
+      toast.info('PRD 正在生成中，请稍候...');
+      return;
+    }
+
+    // 启动全局生成任务
+    const abortController = startTask(projectId);
 
     try {
       // 构建对话历史
@@ -152,7 +199,7 @@ export default function PRDPage() {
             const { content } = JSON.parse(data);
             if (content) {
               fullContent += content;
-              appendStreamContent(content);
+              appendTaskContent(projectId, content);
             }
           } catch (e) {
             // 忽略解析错误
@@ -168,7 +215,7 @@ export default function PRDPage() {
             const { content } = JSON.parse(data);
             if (content) {
               fullContent += content;
-              appendStreamContent(content);
+              appendTaskContent(projectId, content);
             }
           } catch (e) {
             // 忽略解析错误
@@ -179,16 +226,25 @@ export default function PRDPage() {
       // 保存PRD内容
       await updatePRDContent(fullContent);
       await setProjectStatus('generated');
+      
+      // 完成生成任务
+      completeTask(projectId);
       toast.success('PRD 生成完成');
 
     } catch (error) {
+      // 检查是否是取消操作
+      if (error instanceof Error && error.name === 'AbortError') {
+        toast.info('PRD 生成已取消');
+        clearTask(projectId);
+        return;
+      }
+      
       console.error('Generate PRD error:', error);
-      toast.error(error instanceof Error ? error.message : 'PRD生成失败');
-    } finally {
-      setIsGenerating(false);
-      clearStreamContent();
+      const errorMessage = error instanceof Error ? error.message : 'PRD生成失败';
+      errorTask(projectId, errorMessage);
+      toast.error(errorMessage);
     }
-  }, [currentProject, settings, appendStreamContent, clearStreamContent, updatePRDContent, setProjectStatus]);
+  }, [currentProject, settings, projectId, getTask, startTask, appendTaskContent, completeTask, errorTask, clearTask, updatePRDContent, setProjectStatus]);
 
   // 继续对话
   const handleSend = async () => {
@@ -350,32 +406,32 @@ ${currentProject.prdContent}
     );
   }
 
-  const prdContent = isGenerating ? streamContent : currentProject.prdContent;
+  const prdContent = isGenerating ? prdTaskContent : currentProject.prdContent;
 
   return (
     <div className="h-screen flex flex-col">
       {/* 顶部导航 */}
-      <header className="flex-shrink-0 border-b bg-background">
-        <div className="container px-4 md:px-6 flex h-14 items-center justify-between">
-          <div className="flex items-center gap-4">
+      <header className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+        <div className="container px-3 sm:px-4 md:px-6 flex h-12 sm:h-14 items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
             <Link href="/">
-              <Button variant="ghost" size="icon">
-                <ArrowLeft className="h-5 w-5" />
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0 touch-feedback">
+                <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
               </Button>
             </Link>
-            <h1 className="font-semibold truncate max-w-[200px] md:max-w-none">
+            <h1 className="font-semibold text-sm sm:text-base truncate">
               {currentProject.name}
             </h1>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm">
-                  <Download className="mr-2 h-4 w-4" />
-                  导出
+                <Button variant="outline" size="sm" className="h-8 sm:h-9 text-xs sm:text-sm px-2 sm:px-3 touch-feedback">
+                  <Download className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+                  <span className="hidden xs:inline">导出</span>
                 </Button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent>
+              <DropdownMenuContent align="end">
                 <DropdownMenuItem onClick={() => handleExport('md')}>
                   Markdown (.md)
                 </DropdownMenuItem>
@@ -390,8 +446,8 @@ ${currentProject.prdContent}
               </DropdownMenuContent>
             </DropdownMenu>
             <Link href="/settings">
-              <Button variant="ghost" size="icon">
-                <Settings className="h-5 w-5" />
+              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 touch-feedback">
+                <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
               </Button>
             </Link>
           </div>
@@ -399,24 +455,24 @@ ${currentProject.prdContent}
       </header>
 
       {/* 移动端Tab切换 */}
-      <div className="md:hidden border-b">
+      <div className="md:hidden border-b bg-background/95 backdrop-blur">
         <div className="flex">
           <button
             onClick={() => setMobileTab('chat')}
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+            className={`flex-1 py-3 text-sm font-medium transition-all touch-feedback ${
               mobileTab === 'chat'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-muted-foreground'
+                ? 'border-b-2 border-primary text-primary bg-primary/5'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             对话区
           </button>
           <button
             onClick={() => setMobileTab('prd')}
-            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+            className={`flex-1 py-3 text-sm font-medium transition-all touch-feedback ${
               mobileTab === 'prd'
-                ? 'border-b-2 border-primary text-primary'
-                : 'text-muted-foreground'
+                ? 'border-b-2 border-primary text-primary bg-primary/5'
+                : 'text-muted-foreground hover:text-foreground'
             }`}
           >
             PRD 文档
@@ -427,22 +483,22 @@ ${currentProject.prdContent}
       {/* 主内容区域 - 左右分栏 */}
       <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
         {/* 左侧对话区 */}
-        <div className={`w-full md:w-2/5 border-r flex flex-col min-h-0 ${
+        <div className={`w-full md:w-2/5 lg:w-1/3 border-r flex flex-col min-h-0 ${
           mobileTab === 'chat' ? 'flex' : 'hidden md:flex'
         }`}>
-          <div className="p-2 border-b bg-muted/50">
-            <h2 className="text-sm font-medium text-center">对话区</h2>
+          <div className="p-2 border-b bg-muted/30 hidden md:block">
+            <h2 className="text-sm font-medium text-center text-muted-foreground">对话区</h2>
           </div>
           
-          <ScrollArea className="flex-1 min-h-0 p-4" viewportRef={scrollViewportRef}>
-            <div className="space-y-4">
+          <ScrollArea className="flex-1 min-h-0 custom-scrollbar" viewportRef={scrollViewportRef}>
+            <div className="p-3 sm:p-4 space-y-3">
               {currentProject.conversation.slice(-10).map((message) => (
                 <div
                   key={message.id}
                   className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
                   <div
-                    className={`max-w-[90%] rounded-lg p-3 text-sm ${
+                    className={`max-w-[90%] rounded-xl p-2.5 sm:p-3 text-sm transition-all ${
                       message.role === 'user'
                         ? 'bg-primary text-primary-foreground'
                         : 'bg-muted'
@@ -463,7 +519,7 @@ ${currentProject.prdContent}
 
               {isStreaming && streamContent && (
                 <div className="flex justify-start">
-                  <div className="max-w-[90%] rounded-lg p-3 bg-muted text-sm">
+                  <div className="max-w-[90%] rounded-xl p-2.5 sm:p-3 bg-muted text-sm">
                     <div className="prose prose-sm dark:prose-invert max-w-none">
                       <ReactMarkdown remarkPlugins={[remarkGfm]}>
                         {streamContent.slice(0, 500)}
@@ -475,7 +531,7 @@ ${currentProject.prdContent}
 
               {isStreaming && !streamContent && (
                 <div className="flex justify-start">
-                  <div className="rounded-lg p-3 bg-muted">
+                  <div className="rounded-xl p-2.5 sm:p-3 bg-muted">
                     <div className="flex items-center gap-2">
                       <Loader2 className="h-4 w-4 animate-spin" />
                       <span className="text-sm text-muted-foreground">思考中...</span>
@@ -487,7 +543,7 @@ ${currentProject.prdContent}
           </ScrollArea>
 
           {/* 输入区域 */}
-          <div className="flex-shrink-0 border-t p-3">
+          <div className="flex-shrink-0 border-t p-2 sm:p-3 bg-background safe-area-inset">
             <div className="flex gap-2">
               <Textarea
                 value={input}
@@ -498,8 +554,8 @@ ${currentProject.prdContent}
                     handleSend();
                   }
                 }}
-                placeholder="继续对话，补充需求或要求修改..."
-                className="min-h-[40px] max-h-[100px] resize-none text-sm"
+                placeholder="继续对话..."
+                className="min-h-[38px] sm:min-h-[40px] max-h-[80px] sm:max-h-[100px] resize-none text-sm"
                 rows={1}
                 disabled={isStreaming}
               />
@@ -507,7 +563,7 @@ ${currentProject.prdContent}
                 onClick={handleSend}
                 disabled={!input.trim() || isStreaming}
                 size="icon"
-                className="h-[40px] w-[40px]"
+                className="h-[38px] w-[38px] sm:h-[40px] sm:w-[40px] flex-shrink-0 touch-feedback"
               >
                 {isStreaming ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
@@ -523,38 +579,41 @@ ${currentProject.prdContent}
         <div className={`flex-1 flex flex-col min-h-0 ${
           mobileTab === 'prd' ? 'flex' : 'hidden md:flex'
         }`}>
-          <div className="p-2 border-b bg-muted/50 flex items-center justify-between">
-            <h2 className="text-sm font-medium">PRD 文档</h2>
-            <div className="flex items-center gap-2">
+          <div className="p-2 border-b bg-muted/30 flex items-center justify-between">
+            <h2 className="text-sm font-medium text-muted-foreground hidden md:block">PRD 文档</h2>
+            <div className="flex items-center gap-2 w-full md:w-auto justify-between md:justify-end">
               {isGenerating && (
                 <span className="text-xs text-muted-foreground flex items-center gap-1">
                   <Loader2 className="h-3 w-3 animate-spin" />
-                  生成中...
+                  生成中... {prdTaskElapsedTime > 0 && `${prdTaskElapsedTime}s`}
                 </span>
               )}
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setEditMode(!editMode)}
-                disabled={isGenerating}
-              >
-                {editMode ? (
-                  <>
-                    <Eye className="mr-1 h-4 w-4" />
-                    预览
-                  </>
-                ) : (
-                  <>
-                    <Edit className="mr-1 h-4 w-4" />
-                    编辑
-                  </>
-                )}
-              </Button>
-              {!currentProject.prdContent && !isGenerating && (
-                <Button size="sm" onClick={generatePRD}>
-                  生成 PRD
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setEditMode(!editMode)}
+                  disabled={isGenerating}
+                  className="h-8 text-xs sm:text-sm touch-feedback"
+                >
+                  {editMode ? (
+                    <>
+                      <Eye className="mr-1 h-3 w-3 sm:h-4 sm:w-4" />
+                      预览
+                    </>
+                  ) : (
+                    <>
+                      <Edit className="mr-1 h-3 w-3 sm:h-4 sm:w-4" />
+                      编辑
+                    </>
+                  )}
                 </Button>
-              )}
+                {!currentProject.prdContent && !isGenerating && (
+                  <Button size="sm" onClick={generatePRD} className="h-8 text-xs sm:text-sm touch-feedback">
+                    生成 PRD
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
 
@@ -569,16 +628,92 @@ ${currentProject.prdContent}
                 />
               </div>
             ) : (
-              <ScrollArea className="h-full min-h-0 p-6">
-                <div className="prose prose-sm dark:prose-invert max-w-none">
-                  {prdContent ? (
+              <ScrollArea className="h-full min-h-0 custom-scrollbar">
+                <div className="p-4 sm:p-6 prose prose-sm dark:prose-invert max-w-none">
+                  {/* 生成中状态 - 显示骨架屏或流式内容 */}
+                  {isGenerating && (
+                    <div className="space-y-4">
+                      {/* 生成进度提示 */}
+                      <div className="flex items-center justify-center gap-3 py-4 px-4 bg-blue-50 dark:bg-blue-950/30 rounded-lg border border-blue-200 dark:border-blue-800">
+                        <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-400" />
+                        <div className="text-sm">
+                          <span className="text-blue-700 dark:text-blue-300 font-medium">PRD 文档生成中</span>
+                          {prdTaskElapsedTime > 0 && (
+                            <span className="text-blue-600/70 dark:text-blue-400/70 ml-2">
+                              已用时 {prdTaskElapsedTime} 秒
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                                  
+                      {/* 流式内容或骨架屏 */}
+                      {prdTaskContent ? (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {prdTaskContent}
+                        </ReactMarkdown>
+                      ) : (
+                        /* 骨架屏占位 */
+                        <div className="space-y-6 animate-pulse">
+                          <div className="space-y-3">
+                            <div className="h-8 bg-muted rounded w-1/3"></div>
+                            <div className="h-4 bg-muted rounded w-full"></div>
+                            <div className="h-4 bg-muted rounded w-5/6"></div>
+                            <div className="h-4 bg-muted rounded w-4/6"></div>
+                          </div>
+                          <div className="space-y-3">
+                            <div className="h-6 bg-muted rounded w-1/4"></div>
+                            <div className="h-4 bg-muted rounded w-full"></div>
+                            <div className="h-4 bg-muted rounded w-3/4"></div>
+                          </div>
+                          <div className="space-y-3">
+                            <div className="h-6 bg-muted rounded w-1/3"></div>
+                            <div className="h-4 bg-muted rounded w-full"></div>
+                            <div className="h-4 bg-muted rounded w-5/6"></div>
+                            <div className="h-4 bg-muted rounded w-2/3"></div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                              
+                  {/* 错误状态 */}
+                  {prdTaskError && (
+                    <div className="flex flex-col items-center justify-center py-12 sm:py-16">
+                      <div className="inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-red-100 dark:bg-red-950/30 mb-4">
+                        <AlertCircle className="h-6 w-6 sm:h-8 sm:w-8 text-red-600 dark:text-red-400" />
+                      </div>
+                      <p className="text-sm sm:text-base text-red-600 dark:text-red-400 mb-2">生成失败</p>
+                      <p className="text-xs sm:text-sm text-muted-foreground mb-4">{prdTaskError}</p>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => {
+                          clearTask(projectId);
+                          generatePRD();
+                        }}
+                        className="touch-feedback"
+                      >
+                        <RefreshCcw className="mr-2 h-4 w-4" />
+                        重试
+                      </Button>
+                    </div>
+                  )}
+                              
+                  {/* 正常内容显示 */}
+                  {!isGenerating && !prdTaskError && prdContent && (
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
                       {prdContent}
                     </ReactMarkdown>
-                  ) : (
-                    <div className="text-center py-16 text-muted-foreground">
-                      <p>还没有生成 PRD 文档</p>
-                      <p className="text-sm mt-2">点击右上角"生成 PRD"按钮开始生成</p>
+                  )}
+                              
+                  {/* 空状态 */}
+                  {!isGenerating && !prdTaskError && !prdContent && (
+                    <div className="text-center py-12 sm:py-16 text-muted-foreground">
+                      <div className="inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-muted mb-4">
+                        <FileText className="h-6 w-6 sm:h-8 sm:w-8" />
+                      </div>
+                      <p className="text-sm sm:text-base">还没有生成 PRD 文档</p>
+                      <p className="text-xs sm:text-sm mt-2">点击上方“生成 PRD”按钮开始生成</p>
                     </div>
                   )}
                 </div>

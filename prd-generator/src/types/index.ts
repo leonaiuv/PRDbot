@@ -190,3 +190,23 @@ export interface GenerationState {
   error?: string;
   retryCount: number;
 }
+
+// ========== PRD生成状态管理 ==========
+
+// PRD生成阶段
+export type PRDGenerationPhase = 
+  | 'idle'           // 空闲
+  | 'generating'     // 生成中
+  | 'completed'      // 已完成
+  | 'error';         // 错误
+
+// PRD生成任务状态
+export interface PRDGenerationTask {
+  projectId: string;
+  phase: PRDGenerationPhase;
+  startTime: number;
+  elapsedTime: number;
+  streamContent: string;
+  error?: string;
+  abortController?: AbortController;
+}

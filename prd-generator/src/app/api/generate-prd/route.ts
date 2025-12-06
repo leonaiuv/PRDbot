@@ -111,9 +111,18 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { conversationHistory, model, apiKey, customApiUrl } = body;
 
+    console.log('[generate-prd] Request received:', { model, hasApiKey: !!apiKey, hasConversation: !!conversationHistory });
+
     if (!apiKey) {
       return NextResponse.json(
         { error: '请先配置 API Key' },
+        { status: 400 }
+      );
+    }
+
+    if (!conversationHistory) {
+      return NextResponse.json(
+        { error: '缺少对话历史数据' },
         { status: 400 }
       );
     }
@@ -235,8 +244,9 @@ ${conversationHistory}
     });
   } catch (error) {
     console.error('Generate PRD API Error:', error);
+    const errorMessage = error instanceof Error ? error.message : '服务器内部错误';
     return NextResponse.json(
-      { error: '服务器内部错误' },
+      { error: `PRD生成失败: ${errorMessage}` },
       { status: 500 }
     );
   }

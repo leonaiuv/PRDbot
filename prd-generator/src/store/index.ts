@@ -10,7 +10,9 @@ import type {
   GenerationStep,
   SelectorData,
   QuestionMeta,
-  GENERATION_STEPS
+  GENERATION_STEPS,
+  PRDGenerationPhase,
+  PRDGenerationTask
 } from '@/types';
 
 // 项目Store状态
@@ -405,6 +407,146 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       retryParams: null,
       isStreaming: false,
       streamContent: '',
+    });
+  },
+}));
+
+// ========== PRD生成Store状态 ==========
+interface PRDGenerationStore {
+  // 生成任务映射: projectId -> 任务状态
+  tasks: Record<string, PRDGenerationTask>;
+  
+  // 方法
+  getTask: (projectId: string) => PRDGenerationTask | undefined;
+  startTask: (projectId: string) => AbortController;
+  updateTaskContent: (projectId: string, content: string) => void;
+  appendTaskContent: (projectId: string, content: string) => void;
+  completeTask: (projectId: string) => void;
+  errorTask: (projectId: string, error: string) => void;
+  cancelTask: (projectId: string) => void;
+  updateElapsedTime: (projectId: string) => void;
+  clearTask: (projectId: string) => void;
+}
+
+export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
+  tasks: {},
+
+  getTask: (projectId: string) => {
+    return get().tasks[projectId];
+  },
+
+  startTask: (projectId: string) => {
+    const abortController = new AbortController();
+    set(state => ({
+      tasks: {
+        ...state.tasks,
+        [projectId]: {
+          projectId,
+          phase: 'generating',
+          startTime: Date.now(),
+          elapsedTime: 0,
+          streamContent: '',
+          abortController,
+        },
+      },
+    }));
+    return abortController;
+  },
+
+  updateTaskContent: (projectId: string, content: string) => {
+    set(state => {
+      const task = state.tasks[projectId];
+      if (!task) return state;
+      return {
+        tasks: {
+          ...state.tasks,
+          [projectId]: { ...task, streamContent: content },
+        },
+      };
+    });
+  },
+
+  appendTaskContent: (projectId: string, content: string) => {
+    set(state => {
+      const task = state.tasks[projectId];
+      if (!task) return state;
+      return {
+        tasks: {
+          ...state.tasks,
+          [projectId]: { ...task, streamContent: task.streamContent + content },
+        },
+      };
+    });
+  },
+
+  completeTask: (projectId: string) => {
+    set(state => {
+      const task = state.tasks[projectId];
+      if (!task) return state;
+      return {
+        tasks: {
+          ...state.tasks,
+          [projectId]: { 
+            ...task, 
+            phase: 'completed',
+            abortController: undefined,
+          },
+        },
+      };
+    });
+  },
+
+  errorTask: (projectId: string, error: string) => {
+    set(state => {
+      const task = state.tasks[projectId];
+      if (!task) return state;
+      return {
+        tasks: {
+          ...state.tasks,
+          [projectId]: { 
+            ...task, 
+            phase: 'error',
+            error,
+            abortController: undefined,
+          },
+        },
+      };
+    });
+  },
+
+  cancelTask: (projectId: string) => {
+    const task = get().tasks[projectId];
+    if (task?.abortController) {
+      task.abortController.abort();
+    }
+    set(state => {
+      const newTasks = { ...state.tasks };
+      delete newTasks[projectId];
+      return { tasks: newTasks };
+    });
+  },
+
+  updateElapsedTime: (projectId: string) => {
+    set(state => {
+      const task = state.tasks[projectId];
+      if (!task || task.phase !== 'generating') return state;
+      return {
+        tasks: {
+          ...state.tasks,
+          [projectId]: {
+            ...task,
+            elapsedTime: Math.floor((Date.now() - task.startTime) / 1000),
+          },
+        },
+      };
+    });
+  },
+
+  clearTask: (projectId: string) => {
+    set(state => {
+      const newTasks = { ...state.tasks };
+      delete newTasks[projectId];
+      return { tasks: newTasks };
     });
   },
 }));
