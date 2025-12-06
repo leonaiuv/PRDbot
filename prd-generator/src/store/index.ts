@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
-import { projectsDB, settingsDB } from '@/lib/db';
+import { projectsDB, settingsDB, chatDraftsDB, prdTasksDB } from '@/lib/db';
 import type { 
   Project, 
   Settings, 
@@ -12,7 +12,9 @@ import type {
   QuestionMeta,
   GENERATION_STEPS,
   PRDGenerationPhase,
-  PRDGenerationTask
+  PRDGenerationTask,
+  ChatDraft,
+  PRDGenerationTaskPersisted
 } from '@/types';
 
 // 项目Store状态
@@ -118,60 +120,79 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
   },
 
   addMessage: async (message: ConversationMessage) => {
-    const { currentProject } = get();
+    const { currentProject, projects } = get();
     if (!currentProject) return;
     
     const newConversation = [...currentProject.conversation, message];
     const userMessages = newConversation.filter(m => m.role === 'user');
+    const now = Date.now();
     
-    await projectsDB.update(currentProject.id, {
+    const updatedProject: Project = {
+      ...currentProject,
       conversation: newConversation,
+      updatedAt: now,
       metadata: {
         ...currentProject.metadata,
         questionCount: userMessages.length,
         progress: Math.min((userMessages.length / 20) * 100, 100)
       }
+    };
+    
+    await projectsDB.update(currentProject.id, {
+      conversation: newConversation,
+      metadata: updatedProject.metadata
     });
     
+    // 同时更新 currentProject 和 projects 列表
     set({
-      currentProject: {
-        ...currentProject,
-        conversation: newConversation,
-        updatedAt: Date.now(),
-        metadata: {
-          ...currentProject.metadata,
-          questionCount: userMessages.length,
-          progress: Math.min((userMessages.length / 20) * 100, 100)
-        }
-      }
+      currentProject: updatedProject,
+      projects: projects.map(p => 
+        p.id === currentProject.id ? updatedProject : p
+      )
     });
   },
 
   updatePRDContent: async (content: string) => {
-    const { currentProject } = get();
+    const { currentProject, projects } = get();
     if (!currentProject) return;
     
+    const now = Date.now();
+    const updatedProject: Project = {
+      ...currentProject,
+      prdContent: content,
+      updatedAt: now
+    };
+    
     await projectsDB.update(currentProject.id, { prdContent: content });
+    
+    // 同时更新 currentProject 和 projects 列表
     set({
-      currentProject: {
-        ...currentProject,
-        prdContent: content,
-        updatedAt: Date.now()
-      }
+      currentProject: updatedProject,
+      projects: projects.map(p => 
+        p.id === currentProject.id ? updatedProject : p
+      )
     });
   },
 
   setProjectStatus: async (status: Project['status']) => {
-    const { currentProject } = get();
+    const { currentProject, projects } = get();
     if (!currentProject) return;
     
+    const now = Date.now();
+    const updatedProject: Project = {
+      ...currentProject,
+      status,
+      updatedAt: now
+    };
+    
     await projectsDB.update(currentProject.id, { status });
+    
+    // 同时更新 currentProject 和 projects 列表
     set({
-      currentProject: {
-        ...currentProject,
-        status,
-        updatedAt: Date.now()
-      }
+      currentProject: updatedProject,
+      projects: projects.map(p => 
+        p.id === currentProject.id ? updatedProject : p
+      )
     });
   },
 
@@ -265,6 +286,10 @@ interface ChatStore {
   setGenerationError: (error: string) => void;
   updateElapsedTime: () => void;
   resetGeneration: () => void;
+  // 新增：安全中断并重置（用于组件卸载时）
+  abortAndReset: () => void;
+  // 新增：获取当前 AbortController的signal（用于fetch请求）
+  getAbortSignal: () => AbortSignal | undefined;
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
@@ -393,6 +418,11 @@ export const useChatStore = create<ChatStore>((set, get) => ({
   },
 
   resetGeneration: () => {
+    // 重置前先中断进行中的请求
+    const { abortController } = get();
+    if (abortController) {
+      abortController.abort();
+    }
     set({
       generationPhase: 'idle',
       currentStep: 'understanding',
@@ -409,6 +439,36 @@ export const useChatStore = create<ChatStore>((set, get) => ({
       streamContent: '',
     });
   },
+
+  // 安全中断并重置（用于组件卸载时）
+  abortAndReset: () => {
+    const { abortController, generationPhase } = get();
+    // 如果有进行中的请求，先中断
+    if (abortController && generationPhase === 'generating') {
+      abortController.abort();
+    }
+    // 重置状态
+    set({
+      generationPhase: 'idle',
+      currentStep: 'understanding',
+      stepIndex: 0,
+      startTime: 0,
+      elapsedTime: 0,
+      pendingSelectors: [],
+      questionMeta: null,
+      error: null,
+      canCancel: true,
+      abortController: null,
+      retryParams: null,
+      isStreaming: false,
+      streamContent: '',
+    });
+  },
+
+  // 获取当前 AbortController的signal
+  getAbortSignal: () => {
+    return get().abortController?.signal;
+  },
 }));
 
 // ========== PRD生成Store状态 ==========
@@ -421,11 +481,19 @@ interface PRDGenerationStore {
   startTask: (projectId: string) => AbortController;
   updateTaskContent: (projectId: string, content: string) => void;
   appendTaskContent: (projectId: string, content: string) => void;
-  completeTask: (projectId: string) => void;
-  errorTask: (projectId: string, error: string) => void;
-  cancelTask: (projectId: string) => void;
+  completeTask: (projectId: string) => Promise<void>;
+  errorTask: (projectId: string, error: string) => Promise<void>;
+  cancelTask: (projectId: string) => Promise<void>;
   updateElapsedTime: (projectId: string) => void;
-  clearTask: (projectId: string) => void;
+  clearTask: (projectId: string) => Promise<void>;
+  // 新增：从持久化存储加载任务
+  loadPersistedTask: (projectId: string) => Promise<PRDGenerationTaskPersisted | undefined>;
+  // 新增：恢复中断的任务（从持久化恢复到内存）
+  restoreTask: (projectId: string) => Promise<boolean>;
+  // 新增：持久化当前任务状态
+  persistTask: (projectId: string) => Promise<void>;
+  // 新增：安全中断并保存（用于组件卸载时）
+  abortAndPersist: (projectId: string) => Promise<void>;
 }
 
 export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
@@ -437,19 +505,28 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
 
   startTask: (projectId: string) => {
     const abortController = new AbortController();
+    const task: PRDGenerationTask = {
+      projectId,
+      phase: 'generating',
+      startTime: Date.now(),
+      elapsedTime: 0,
+      streamContent: '',
+      abortController,
+    };
     set(state => ({
       tasks: {
         ...state.tasks,
-        [projectId]: {
-          projectId,
-          phase: 'generating',
-          startTime: Date.now(),
-          elapsedTime: 0,
-          streamContent: '',
-          abortController,
-        },
+        [projectId]: task,
       },
     }));
+    // 异步持久化（不阻塞）
+    prdTasksDB.save({
+      projectId,
+      phase: 'generating',
+      startTime: task.startTime,
+      elapsedTime: 0,
+      streamContent: '',
+    }).catch(console.error);
     return abortController;
   },
 
@@ -479,42 +556,59 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
     });
   },
 
-  completeTask: (projectId: string) => {
-    set(state => {
-      const task = state.tasks[projectId];
-      if (!task) return state;
-      return {
-        tasks: {
-          ...state.tasks,
-          [projectId]: { 
-            ...task, 
-            phase: 'completed',
-            abortController: undefined,
-          },
+  completeTask: async (projectId: string) => {
+    const task = get().tasks[projectId];
+    if (!task) return;
+    
+    set(state => ({
+      tasks: {
+        ...state.tasks,
+        [projectId]: { 
+          ...task, 
+          phase: 'completed',
+          abortController: undefined,
         },
-      };
+      },
+    }));
+    
+    // 持久化完成状态
+    await prdTasksDB.save({
+      projectId,
+      phase: 'completed',
+      startTime: task.startTime,
+      elapsedTime: task.elapsedTime,
+      streamContent: task.streamContent,
     });
   },
 
-  errorTask: (projectId: string, error: string) => {
-    set(state => {
-      const task = state.tasks[projectId];
-      if (!task) return state;
-      return {
-        tasks: {
-          ...state.tasks,
-          [projectId]: { 
-            ...task, 
-            phase: 'error',
-            error,
-            abortController: undefined,
-          },
+  errorTask: async (projectId: string, error: string) => {
+    const task = get().tasks[projectId];
+    if (!task) return;
+    
+    set(state => ({
+      tasks: {
+        ...state.tasks,
+        [projectId]: { 
+          ...task, 
+          phase: 'error',
+          error,
+          abortController: undefined,
         },
-      };
+      },
+    }));
+    
+    // 持久化错误状态
+    await prdTasksDB.save({
+      projectId,
+      phase: 'error',
+      startTime: task.startTime,
+      elapsedTime: task.elapsedTime,
+      streamContent: task.streamContent,
+      error,
     });
   },
 
-  cancelTask: (projectId: string) => {
+  cancelTask: async (projectId: string) => {
     const task = get().tasks[projectId];
     if (task?.abortController) {
       task.abortController.abort();
@@ -524,6 +618,8 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
       delete newTasks[projectId];
       return { tasks: newTasks };
     });
+    // 删除持久化记录
+    await prdTasksDB.delete(projectId);
   },
 
   updateElapsedTime: (projectId: string) => {
@@ -542,11 +638,118 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
     });
   },
 
-  clearTask: (projectId: string) => {
+  clearTask: async (projectId: string) => {
     set(state => {
       const newTasks = { ...state.tasks };
       delete newTasks[projectId];
       return { tasks: newTasks };
     });
+    // 删除持久化记录
+    await prdTasksDB.delete(projectId);
+  },
+
+  // 从持久化存储加载任务
+  loadPersistedTask: async (projectId: string) => {
+    return await prdTasksDB.get(projectId);
+  },
+
+  // 恢复中断的任务（从持久化恢复到内存）
+  restoreTask: async (projectId: string) => {
+    const persisted = await prdTasksDB.get(projectId);
+    if (!persisted) return false;
+    
+    // 如果是生成中状态，标记为错误（因为请求已中断）
+    if (persisted.phase === 'generating') {
+      const task: PRDGenerationTask = {
+        projectId: persisted.projectId,
+        phase: 'error',
+        startTime: persisted.startTime,
+        elapsedTime: persisted.elapsedTime,
+        streamContent: persisted.streamContent,
+        error: '生成过程中断，请重试',
+      };
+      set(state => ({
+        tasks: {
+          ...state.tasks,
+          [projectId]: task,
+        },
+      }));
+      // 更新持久化状态
+      await prdTasksDB.save({
+        ...persisted,
+        phase: 'error',
+        error: '生成过程中断，请重试',
+      });
+      return true;
+    }
+    
+    // 其他状态直接恢复
+    if (persisted.phase === 'error') {
+      set(state => ({
+        tasks: {
+          ...state.tasks,
+          [projectId]: {
+            projectId: persisted.projectId,
+            phase: persisted.phase,
+            startTime: persisted.startTime,
+            elapsedTime: persisted.elapsedTime,
+            streamContent: persisted.streamContent,
+            error: persisted.error,
+          },
+        },
+      }));
+      return true;
+    }
+    
+    return false;
+  },
+
+  // 持久化当前任务状态
+  persistTask: async (projectId: string) => {
+    const task = get().tasks[projectId];
+    if (!task) return;
+    
+    await prdTasksDB.save({
+      projectId: task.projectId,
+      phase: task.phase,
+      startTime: task.startTime,
+      elapsedTime: task.elapsedTime,
+      streamContent: task.streamContent,
+      error: task.error,
+    });
+  },
+
+  // 安全中断并保存（用于组件卸载时）
+  abortAndPersist: async (projectId: string) => {
+    const task = get().tasks[projectId];
+    if (!task) return;
+    
+    // 如果正在生成，中断请求
+    if (task.abortController && task.phase === 'generating') {
+      task.abortController.abort();
+    }
+    
+    // 保存当前进度（标记为中断错误）
+    await prdTasksDB.save({
+      projectId: task.projectId,
+      phase: 'error',
+      startTime: task.startTime,
+      elapsedTime: task.elapsedTime,
+      streamContent: task.streamContent,
+      error: '生成过程中断，请重试',
+    });
+    
+    // 更新内存状态
+    set(state => ({
+      tasks: {
+        ...state.tasks,
+        [projectId]: {
+          ...task,
+          phase: 'error',
+          error: '生成过程中断，请重试',
+          abortController: undefined,
+        },
+      },
+    }));
   },
 }));

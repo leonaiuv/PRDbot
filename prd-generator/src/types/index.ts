@@ -200,7 +200,7 @@ export type PRDGenerationPhase =
   | 'completed'      // 已完成
   | 'error';         // 错误
 
-// PRD生成任务状态
+// PRD生成任务状态（内存版，包含 AbortController）
 export interface PRDGenerationTask {
   projectId: string;
   phase: PRDGenerationPhase;
@@ -209,4 +209,34 @@ export interface PRDGenerationTask {
   streamContent: string;
   error?: string;
   abortController?: AbortController;
+}
+
+// PRD生成任务状态（持久化版，不含 AbortController）
+export interface PRDGenerationTaskPersisted {
+  projectId: string;
+  phase: PRDGenerationPhase;
+  startTime: number;
+  elapsedTime: number;
+  streamContent: string;
+  error?: string;
+  updatedAt: number;
+}
+
+// ========== 聊天草稿状态持久化 ==========
+
+// 聊天草稿（用于持久化未提交的表单选择）
+export interface ChatDraft {
+  projectId: string;
+  // 当前待交互的选择器
+  currentSelectors: SelectorData[];
+  // 用户已选择但未提交的值: { selectorId: selectedValues[] }
+  selectionsMap: Record<string, string[]>;
+  // 问题元数据
+  questionMeta: QuestionMeta | null;
+  // 生成阶段
+  generationPhase: GenerationPhase;
+  // 输入框暂存内容
+  inputDraft: string;
+  // 更新时间
+  updatedAt: number;
 }

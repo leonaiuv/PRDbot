@@ -1,18 +1,29 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Project, Settings } from '@/types';
+import type { Project, Settings, ChatDraft, PRDGenerationTaskPersisted } from '@/types';
 import { encryptApiKeys, decryptApiKeys, isEncrypted } from './crypto';
 
 // 定义数据库类
 class PRDDatabase extends Dexie {
   projects!: EntityTable<Project, 'id'>;
   settings!: EntityTable<Settings, 'id'>;
+  chatDrafts!: EntityTable<ChatDraft, 'projectId'>;
+  prdTasks!: EntityTable<PRDGenerationTaskPersisted, 'projectId'>;
 
   constructor() {
     super('PRDGeneratorDB');
     
+    // 版本1: 初始结构
     this.version(1).stores({
       projects: 'id, name, createdAt, updatedAt, status',
       settings: 'id'
+    });
+    
+    // 版本2: 添加聊天草稿和PRD任务持久化
+    this.version(2).stores({
+      projects: 'id, name, createdAt, updatedAt, status',
+      settings: 'id',
+      chatDrafts: 'projectId, updatedAt',
+      prdTasks: 'projectId, phase, updatedAt'
     });
   }
 }
@@ -122,6 +133,76 @@ export const settingsDB = {
       settings = defaultSettings;
     }
     return settings;
+  }
+};
+
+// 聊天草稿操作函数
+export const chatDraftsDB = {
+  // 获取指定项目的草稿
+  async get(projectId: string): Promise<ChatDraft | undefined> {
+    return await db.chatDrafts.get(projectId);
+  },
+
+  // 保存或更新草稿
+  async save(draft: Omit<ChatDraft, 'updatedAt'>): Promise<string> {
+    const draftWithTime: ChatDraft = {
+      ...draft,
+      updatedAt: Date.now()
+    };
+    await db.chatDrafts.put(draftWithTime);
+    return draft.projectId;
+  },
+
+  // 删除草稿
+  async delete(projectId: string): Promise<void> {
+    return await db.chatDrafts.delete(projectId);
+  },
+
+  // 清理过期草稿（7天前）
+  async cleanupOld(): Promise<number> {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    return await db.chatDrafts.where('updatedAt').below(cutoff).delete();
+  }
+};
+
+// PRD任务持久化操作函数
+export const prdTasksDB = {
+  // 获取指定项目的任务
+  async get(projectId: string): Promise<PRDGenerationTaskPersisted | undefined> {
+    return await db.prdTasks.get(projectId);
+  },
+
+  // 保存或更新任务
+  async save(task: Omit<PRDGenerationTaskPersisted, 'updatedAt'>): Promise<string> {
+    const taskWithTime: PRDGenerationTaskPersisted = {
+      ...task,
+      updatedAt: Date.now()
+    };
+    await db.prdTasks.put(taskWithTime);
+    return task.projectId;
+  },
+
+  // 删除任务
+  async delete(projectId: string): Promise<void> {
+    return await db.prdTasks.delete(projectId);
+  },
+
+  // 获取所有未完成的任务
+  async getIncomplete(): Promise<PRDGenerationTaskPersisted[]> {
+    return await db.prdTasks.where('phase').equals('generating').toArray();
+  },
+
+  // 清理已完成的任务（1天前）
+  async cleanupCompleted(): Promise<number> {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const completedTasks = await db.prdTasks
+      .where('phase')
+      .equals('completed')
+      .and(task => task.updatedAt < cutoff)
+      .toArray();
+    
+    const ids = completedTasks.map(t => t.projectId);
+    return await db.prdTasks.bulkDelete(ids).then(() => ids.length);
   }
 };
 

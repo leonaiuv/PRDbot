@@ -17,7 +17,8 @@ import { SelectorSkeleton } from '@/components/selector-skeleton';
 import { GeneratingIndicator } from '@/components/generating-indicator';
 import { GenerationStatusBar } from '@/components/generation-status-bar';
 import { useProjectStore, useSettingsStore, useChatStore } from '@/store';
-import type { ConversationMessage, SelectorData, QuestionMeta } from '@/types';
+import { chatDraftsDB } from '@/lib/db';
+import type { ConversationMessage, SelectorData, QuestionMeta, GenerationPhase } from '@/types';
 import type { ValidatedAIResponse } from '@/lib/validator';
 
 // 后端校验响应类型
@@ -78,6 +79,8 @@ export default function ChatPage() {
     setGenerationError,
     updateElapsedTime,
     resetGeneration,
+    abortAndReset,
+    setGenerationPhase,
   } = useChatStore();
   
   const [input, setInput] = useState('');
@@ -96,11 +99,59 @@ export default function ChatPage() {
     setMounted(true);
     loadProject(projectId);
     loadSettings();
-    // 组件卸载时清理
+    // 组件卸载时安全中断并保存草稿
     return () => {
-      resetGeneration();
+      // 使用abortAndReset安全中断进行中的请求
+      abortAndReset();
     };
-  }, [projectId, loadProject, loadSettings, resetGeneration]);
+  }, [projectId, loadProject, loadSettings, abortAndReset]);
+
+  // 从持久化存储或会话历史恢复表单状态
+  useEffect(() => {
+    if (!currentProject || !mounted) return;
+    
+    const restoreFormState = async () => {
+      // 先尝试从持久化草稿恢复
+      const draft = await chatDraftsDB.get(projectId);
+      if (draft && draft.currentSelectors.length > 0) {
+        setCurrentSelectors(draft.currentSelectors);
+        setSelectionsMap(draft.selectionsMap);
+        setInput(draft.inputDraft || '');
+        setPendingSelectors(draft.currentSelectors, draft.questionMeta || undefined);
+        setGenerationPhase(draft.generationPhase || 'interactive');
+        setShowStatusBar(true);
+        return;
+      }
+      
+      // 如果没有草稿，从最后一条assistant消息恢复
+      const conversation = currentProject.conversation;
+      if (conversation.length === 0) return;
+      
+      // 找到最后一条带selectors的assistant消息
+      for (let i = conversation.length - 1; i >= 0; i--) {
+        const msg = conversation[i];
+        if (msg.role === 'assistant' && msg.selectors && msg.selectors.length > 0) {
+          // 检查这条消息后面是否有用户回复（如果有，说明已提交）
+          const hasUserReply = conversation.slice(i + 1).some(m => m.role === 'user');
+          if (!hasUserReply) {
+            // 未提交，恢复表单状态
+            setCurrentSelectors(msg.selectors);
+            const initialMap: Record<string, string[]> = {};
+            msg.selectors.forEach(s => {
+              initialMap[s.id] = [];
+            });
+            setSelectionsMap(initialMap);
+            setPendingSelectors(msg.selectors);
+            setGenerationPhase('interactive');
+            setShowStatusBar(true);
+          }
+          break;
+        }
+      }
+    };
+    
+    restoreFormState();
+  }, [currentProject, mounted, projectId, setPendingSelectors, setGenerationPhase]);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -310,11 +361,23 @@ export default function ChatPage() {
 
   // 处理单个选择器的值变更（受控模式）
   const handleSelectorChange = useCallback((selectorId: string, values: string[]) => {
-    setSelectionsMap(prev => ({
-      ...prev,
-      [selectorId]: values
-    }));
-  }, []);
+    setSelectionsMap(prev => {
+      const newMap = {
+        ...prev,
+        [selectorId]: values
+      };
+      // 异步持久化草稿（不阻塞）
+      chatDraftsDB.save({
+        projectId,
+        currentSelectors,
+        selectionsMap: newMap,
+        questionMeta,
+        generationPhase,
+        inputDraft: input,
+      }).catch(console.error);
+      return newMap;
+    });
+  }, [projectId, currentSelectors, questionMeta, generationPhase, input]);
 
   // 检查是否所有必填项都已填写
   const allRequiredFilled = useMemo(() => {
@@ -365,9 +428,12 @@ export default function ChatPage() {
     setSelectionsMap({});
     resetGeneration();
     
+    // 删除草稿（已提交）
+    await chatDraftsDB.delete(projectId);
+    
     // 发送合并后的用户选择作为消息
     await sendMessage(contentParts.join('\n\n'));
-  }, [currentSelectors, selectionsMap, sendMessage, resetGeneration]);
+  }, [currentSelectors, selectionsMap, sendMessage, resetGeneration, projectId]);
 
   // 处理选择器提交（兼容旧的单个提交模式 - 仅用于单个选择器场景）
   const handleSelectorSubmit = async (selectorId: string, values: string[]) => {
@@ -383,6 +449,9 @@ export default function ChatPage() {
     // 清空当前选择器（因为即将发送新消息）
     setCurrentSelectors([]);
     resetGeneration();
+    
+    // 删除草稿（已提交）
+    await chatDraftsDB.delete(projectId);
 
     // 发送用户选择作为消息
     const content = `${selector.question}\n我的选择：${labels.join('、')}`;

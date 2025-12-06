@@ -49,7 +49,10 @@ export default function PRDPage() {
     completeTask, 
     errorTask, 
     updateElapsedTime,
-    clearTask 
+    clearTask,
+    restoreTask,
+    abortAndPersist,
+    loadPersistedTask,
   } = usePRDGenerationStore();
   const prdTask = usePRDGenerationStore(state => state.tasks[projectId]);
   
@@ -83,7 +86,37 @@ export default function PRDPage() {
     setMounted(true);
     loadProject(projectId);
     loadSettings();
-  }, [projectId, loadProject, loadSettings]);
+    
+    // 组件卸载时安全中断并保存进度
+    return () => {
+      // 如果正在生成，中断并保存进度
+      abortAndPersist(projectId);
+    };
+  }, [projectId, loadProject, loadSettings, abortAndPersist]);
+
+  // 检查并恢复中断的任务
+  useEffect(() => {
+    if (!mounted || !currentProject) return;
+    
+    const checkAndRestoreTask = async () => {
+      // 检查是否有持久化的中断任务
+      const persisted = await loadPersistedTask(projectId);
+      if (persisted && (persisted.phase === 'generating' || persisted.phase === 'error')) {
+        // 边界情况：如果项目已有完整内容，说明上次生成实际成功了，清除错误状态
+        if (currentProject.prdContent && currentProject.prdContent.trim().length > 0) {
+          await clearTask(projectId);
+          return;
+        }
+        // 恢复任务状态
+        await restoreTask(projectId);
+        if (persisted.phase === 'generating') {
+          toast.info('检测到中断的生成任务，请点击重试');
+        }
+      }
+    };
+    
+    checkAndRestoreTask();
+  }, [mounted, projectId, currentProject, loadPersistedTask, restoreTask, clearTask]);
 
   // PRD生成计时器
   useEffect(() => {
@@ -126,12 +159,17 @@ export default function PRDPage() {
     return () => window.removeEventListener('resize', updateEditorHeight);
   }, [editMode]);
 
-  // 自动生成PRD
+  // 自动生成PRD（仅当URL参数指示且没有已存在内容时）
   useEffect(() => {
-    if (shouldGenerate && currentProject && settings && !currentProject.prdContent && !isGenerating) {
-      generatePRD();
-    }
-  }, [shouldGenerate, currentProject, settings]);
+    if (!shouldGenerate || !currentProject || !settings) return;
+    // 检查是否已有内容或正在生成
+    if (currentProject.prdContent || isGenerating) return;
+    // 检查是否有错误任务（不自动重试）
+    const task = getTask(projectId);
+    if (task?.phase === 'error') return;
+    
+    generatePRD();
+  }, [shouldGenerate, currentProject, settings, isGenerating, projectId, getTask]);
 
   // 生成PRD文档
   const generatePRD = useCallback(async () => {
@@ -676,8 +714,8 @@ ${currentProject.prdContent}
                     </div>
                   )}
                               
-                  {/* 错误状态 */}
-                  {prdTaskError && (
+                  {/* 错误状态 - 仅当没有已保存内容时显示 */}
+                  {prdTaskError && !currentProject.prdContent && (
                     <div className="flex flex-col items-center justify-center py-12 sm:py-16">
                       <div className="inline-flex items-center justify-center w-12 h-12 sm:w-16 sm:h-16 rounded-full bg-red-100 dark:bg-red-950/30 mb-4">
                         <AlertCircle className="h-6 w-6 sm:h-8 sm:w-8 text-red-600 dark:text-red-400" />
@@ -699,10 +737,10 @@ ${currentProject.prdContent}
                     </div>
                   )}
                               
-                  {/* 正常内容显示 */}
-                  {!isGenerating && !prdTaskError && prdContent && (
+                  {/* 正常内容显示 - 只要有持久化内容就优先显示 */}
+                  {!isGenerating && currentProject.prdContent && (
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {prdContent}
+                      {currentProject.prdContent}
                     </ReactMarkdown>
                   )}
                               
