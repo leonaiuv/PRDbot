@@ -1,7 +1,17 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
 import { projectsDB, settingsDB } from '@/lib/db';
-import type { Project, Settings, ConversationMessage, UserChoice } from '@/types';
+import type { 
+  Project, 
+  Settings, 
+  ConversationMessage, 
+  UserChoice,
+  GenerationPhase,
+  GenerationStep,
+  SelectorData,
+  QuestionMeta,
+  GENERATION_STEPS
+} from '@/types';
 
 // 项目Store状态
 interface ProjectStore {
@@ -219,21 +229,61 @@ export const useSettingsStore = create<SettingsStore>((set, get) => ({
 
 // 聊天Store状态
 interface ChatStore {
+  // 原有状态
   isStreaming: boolean;
   streamContent: string;
   error: string | null;
   
+  // 新增生成状态
+  generationPhase: GenerationPhase;
+  currentStep: GenerationStep;
+  stepIndex: number;
+  startTime: number;
+  elapsedTime: number;
+  pendingSelectors: SelectorData[];
+  questionMeta: QuestionMeta | null;
+  canCancel: boolean;
+  abortController: AbortController | null;
+  retryParams: { content: string } | null;
+  
+  // 原有方法
   setStreaming: (streaming: boolean) => void;
   appendStreamContent: (content: string) => void;
   clearStreamContent: () => void;
   setError: (error: string | null) => void;
+  
+  // 新增方法
+  startGeneration: (retryParams?: { content: string }) => void;
+  setGenerationPhase: (phase: GenerationPhase) => void;
+  advanceStep: () => void;
+  setStepByIndex: (index: number) => void;
+  setPendingSelectors: (selectors: SelectorData[], meta?: QuestionMeta) => void;
+  completeGeneration: () => void;
+  cancelGeneration: () => void;
+  setGenerationError: (error: string) => void;
+  updateElapsedTime: () => void;
+  resetGeneration: () => void;
 }
 
 export const useChatStore = create<ChatStore>((set, get) => ({
+  // 原有状态
   isStreaming: false,
   streamContent: '',
   error: null,
+  
+  // 新增状态初始化
+  generationPhase: 'idle',
+  currentStep: 'understanding',
+  stepIndex: 0,
+  startTime: 0,
+  elapsedTime: 0,
+  pendingSelectors: [],
+  questionMeta: null,
+  canCancel: true,
+  abortController: null,
+  retryParams: null,
 
+  // 原有方法
   setStreaming: (streaming: boolean) => {
     set({ isStreaming: streaming });
   },
@@ -248,5 +298,113 @@ export const useChatStore = create<ChatStore>((set, get) => ({
 
   setError: (error: string | null) => {
     set({ error });
-  }
+  },
+
+  // 新增方法
+  startGeneration: (retryParams) => {
+    const abortController = new AbortController();
+    set({
+      generationPhase: 'generating',
+      currentStep: 'understanding',
+      stepIndex: 0,
+      startTime: Date.now(),
+      elapsedTime: 0,
+      pendingSelectors: [],
+      questionMeta: null,
+      error: null,
+      canCancel: true,
+      abortController,
+      retryParams: retryParams || null,
+      isStreaming: true,
+      streamContent: '',
+    });
+  },
+
+  setGenerationPhase: (phase: GenerationPhase) => {
+    set({ generationPhase: phase });
+  },
+
+  advanceStep: () => {
+    const { stepIndex } = get();
+    const steps: GenerationStep[] = ['understanding', 'generating', 'building', 'validating'];
+    const nextIndex = Math.min(stepIndex + 1, steps.length - 1);
+    set({
+      stepIndex: nextIndex,
+      currentStep: steps[nextIndex],
+    });
+  },
+
+  setStepByIndex: (index: number) => {
+    const steps: GenerationStep[] = ['understanding', 'generating', 'building', 'validating'];
+    const safeIndex = Math.max(0, Math.min(index, steps.length - 1));
+    set({
+      stepIndex: safeIndex,
+      currentStep: steps[safeIndex],
+    });
+  },
+
+  setPendingSelectors: (selectors: SelectorData[], meta?: QuestionMeta) => {
+    set({ 
+      pendingSelectors: selectors,
+      questionMeta: meta || null,
+    });
+  },
+
+  completeGeneration: () => {
+    set({
+      generationPhase: 'interactive',
+      canCancel: false,
+      isStreaming: false,
+      abortController: null,
+    });
+  },
+
+  cancelGeneration: () => {
+    const { abortController } = get();
+    if (abortController) {
+      abortController.abort();
+    }
+    set({
+      generationPhase: 'idle',
+      isStreaming: false,
+      streamContent: '',
+      pendingSelectors: [],
+      abortController: null,
+      canCancel: false,
+    });
+  },
+
+  setGenerationError: (error: string) => {
+    set({
+      generationPhase: 'error',
+      error,
+      isStreaming: false,
+      canCancel: false,
+    });
+  },
+
+  updateElapsedTime: () => {
+    const { startTime, generationPhase } = get();
+    if (generationPhase === 'generating' && startTime > 0) {
+      set({ elapsedTime: Math.floor((Date.now() - startTime) / 1000) });
+    }
+  },
+
+  resetGeneration: () => {
+    set({
+      generationPhase: 'idle',
+      currentStep: 'understanding',
+      stepIndex: 0,
+      startTime: 0,
+      elapsedTime: 0,
+      pendingSelectors: [],
+      questionMeta: null,
+      error: null,
+      canCancel: true,
+      abortController: null,
+      retryParams: null,
+      isStreaming: false,
+      streamContent: '',
+    });
+  },
 }));

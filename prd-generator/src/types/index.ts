@@ -48,7 +48,7 @@ export interface ConversationMessage {
   role: MessageRole;
   timestamp: number;
   content: string;
-  selector?: SelectorData;
+  selectors?: SelectorData[]; // 支持多个选择器
   userChoice?: UserChoice;
 }
 
@@ -119,4 +119,74 @@ export interface ChatRequest {
 export interface ChatResponse {
   content: string;
   done: boolean;
+}
+
+// ========== 表单生成优化相关类型 ==========
+
+// 生成阶段
+export type GenerationPhase = 
+  | 'idle'           // 空闲
+  | 'generating'     // 生成中
+  | 'rendering'      // 渲染结果
+  | 'interactive'    // 可交互
+  | 'error'          // 错误
+  | 'timeout';       // 超时
+
+// 生成步骤
+export type GenerationStep = 
+  | 'understanding'  // 理解需求
+  | 'generating'     // 生成问题
+  | 'building'       // 构建表单
+  | 'validating';    // 校验完成
+
+// 步骤配置
+export interface StepConfig {
+  key: GenerationStep;
+  label: string;
+  percent: number;
+  duration: number; // 毫秒
+}
+
+// 生成步骤配置
+export const GENERATION_STEPS: StepConfig[] = [
+  { key: 'understanding', label: '理解需求', percent: 25, duration: 3000 },
+  { key: 'generating', label: '生成问题', percent: 50, duration: 5000 },
+  { key: 'building', label: '构建表单', percent: 75, duration: 4000 },
+  { key: 'validating', label: '校验完成', percent: 95, duration: 2000 },
+];
+
+// 问题元数据
+export interface QuestionMeta {
+  phase: 'basic' | 'feature' | 'technical' | 'confirmation';
+  progress: number;
+  canGeneratePRD: boolean;
+  suggestedNextTopic?: string;
+}
+
+// 扩展的AI响应
+export interface AIQuestionsResponseV2 {
+  questions: AIQuestion[];
+  meta?: QuestionMeta;
+}
+
+// 扩展选项，支持描述
+export interface SelectorOptionV2 extends SelectorOption {
+  description?: string;
+}
+
+// 扩展选择器数据
+export interface SelectorDataV2 extends Omit<SelectorData, 'options'> {
+  options: SelectorOptionV2[];
+  helpText?: string;
+  placeholder?: string;
+}
+
+// 生成状态
+export interface GenerationState {
+  phase: GenerationPhase;
+  step: GenerationStep;
+  stepIndex: number;
+  startTime: number;
+  error?: string;
+  retryCount: number;
 }

@@ -1,5 +1,6 @@
 import Dexie, { type EntityTable } from 'dexie';
 import type { Project, Settings } from '@/types';
+import { encryptApiKeys, decryptApiKeys, isEncrypted } from './crypto';
 
 // 定义数据库类
 class PRDDatabase extends Dexie {
@@ -61,26 +62,42 @@ export const projectsDB = {
 
 // 设置操作函数
 export const settingsDB = {
-  // 获取设置
+  // 获取设置（解密 API Keys）
   async get(): Promise<Settings | undefined> {
-    return await db.settings.get('global');
+    const settings = await db.settings.get('global');
+    if (settings && settings.apiKeys) {
+      // 检查是否已加密，如果是则解密
+      const firstKey = Object.values(settings.apiKeys)[0];
+      if (firstKey && isEncrypted(firstKey)) {
+        settings.apiKeys = decryptApiKeys(settings.apiKeys);
+      }
+    }
+    return settings;
   },
 
-  // 保存设置
+  // 保存设置（加密 API Keys）
   async save(settings: Omit<Settings, 'id'>): Promise<string> {
-    const fullSettings: Settings = {
+    const encryptedSettings: Settings = {
       id: 'global',
-      ...settings
+      ...settings,
+      apiKeys: settings.apiKeys ? encryptApiKeys(settings.apiKeys) : {}
     };
-    await db.settings.put(fullSettings);
+    await db.settings.put(encryptedSettings);
     return 'global';
   },
 
-  // 更新设置
+  // 更新设置（如果包含 apiKeys 则加密）
   async update(updates: Partial<Settings>): Promise<void> {
-    const current = await this.get();
+    const current = await db.settings.get('global'); // 获取原始数据（可能已加密）
+    
+    // 如果更新包含 apiKeys，需要加密
+    const encryptedUpdates = { ...updates };
+    if (updates.apiKeys) {
+      encryptedUpdates.apiKeys = encryptApiKeys(updates.apiKeys);
+    }
+    
     if (current) {
-      await db.settings.update('global', updates);
+      await db.settings.update('global', encryptedUpdates);
     } else {
       await this.save({
         apiKeys: {},
@@ -91,9 +108,9 @@ export const settingsDB = {
     }
   },
 
-  // 获取或创建默认设置
+  // 获取或创建默认设置（解密 API Keys）
   async getOrCreate(): Promise<Settings> {
-    let settings = await this.get();
+    let settings = await this.get(); // 使用 get() 以确保解密
     if (!settings) {
       const defaultSettings: Settings = {
         id: 'global',

@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye } from 'lucide-react';
+import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, Construction } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -21,7 +21,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { useProjectStore, useSettingsStore, useChatStore } from '@/store';
+import { useProjectStore, useSettingsStore } from '@/store';
 import { exportMarkdown } from '@/lib/export';
 import type { ConversationMessage } from '@/types';
 
@@ -40,7 +40,16 @@ export default function PRDPage() {
   
   const { currentProject, loadProject, addMessage, updatePRDContent, setProjectStatus, isLoading } = useProjectStore();
   const { settings, loadSettings } = useSettingsStore();
-  const { isStreaming, streamContent, setStreaming, appendStreamContent, clearStreamContent } = useChatStore();
+  
+  // 使用本地状态管理流式响应，避免与 Chat 页面冲突
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [streamContent, setStreamContent] = useState('');
+  const appendStreamContent = useCallback((content: string) => {
+    setStreamContent(prev => prev + content);
+  }, []);
+  const clearStreamContent = useCallback(() => {
+    setStreamContent('');
+  }, []);
   
   const [input, setInput] = useState('');
   const [mounted, setMounted] = useState(false);
@@ -154,7 +163,7 @@ export default function PRDPage() {
     await addMessage(userMessage);
     setInput('');
 
-    setStreaming(true);
+    setIsStreaming(true);
     clearStreamContent();
 
     try {
@@ -232,7 +241,7 @@ ${currentProject.prdContent}
       console.error('Chat error:', error);
       toast.error(error instanceof Error ? error.message : '发送失败');
     } finally {
-      setStreaming(false);
+      setIsStreaming(false);
       clearStreamContent();
     }
   };
@@ -245,19 +254,15 @@ ${currentProject.prdContent}
   }, [currentProject, updatePRDContent]);
 
   // 导出功能
-  const handleExport = (format: 'md' | 'pdf' | 'docx') => {
+  const handleExport = (format: 'md') => {
     if (!currentProject?.prdContent) {
       toast.error('没有可导出的内容');
       return;
     }
 
-    if (format === 'md') {
-      exportMarkdown(currentProject.prdContent, currentProject.name);
-      setProjectStatus('exported');
-      toast.success('Markdown 导出成功');
-    } else {
-      toast.info(`${format.toUpperCase()} 导出功能即将推出`);
-    }
+    exportMarkdown(currentProject.prdContent, currentProject.name);
+    setProjectStatus('exported');
+    toast.success('Markdown 导出成功');
   };
 
   if (!mounted || isLoading) {
@@ -308,11 +313,13 @@ ${currentProject.prdContent}
                 <DropdownMenuItem onClick={() => handleExport('md')}>
                   Markdown (.md)
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleExport('pdf')}>
-                  PDF (.pdf)
+                <DropdownMenuItem disabled className="opacity-50 cursor-not-allowed">
+                  <Construction className="mr-2 h-4 w-4" />
+                  PDF (.pdf) - 开发中
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => handleExport('docx')}>
-                  Word (.docx)
+                <DropdownMenuItem disabled className="opacity-50 cursor-not-allowed">
+                  <Construction className="mr-2 h-4 w-4" />
+                  Word (.docx) - 开发中
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>

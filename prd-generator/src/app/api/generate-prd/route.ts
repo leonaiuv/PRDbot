@@ -8,6 +8,78 @@ const AI_ENDPOINTS: Record<string, string> = {
   custom: '',
 };
 
+// 允许的自定义 API 域名白名单
+const ALLOWED_CUSTOM_DOMAINS = [
+  'api.openai.com',
+  'api.anthropic.com',
+  'api.cohere.ai',
+  'api.mistral.ai',
+  'api.moonshot.cn',
+  'api.baichuan-ai.com',
+  'api.minimax.chat',
+  'api.zhipuai.cn',
+  'open.bigmodel.cn',
+  'aip.baidubce.com',
+  'api.siliconflow.cn',
+];
+
+/**
+ * 校验自定义 API URL 的安全性
+ * 防止 SSRF 攻击
+ */
+function validateCustomApiUrl(url: string): { valid: boolean; error?: string } {
+  if (!url) {
+    return { valid: false, error: '自定义 API URL 不能为空' };
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return { valid: false, error: '无效的 URL 格式' };
+  }
+
+  // 只允许 HTTPS 协议
+  if (parsedUrl.protocol !== 'https:') {
+    return { valid: false, error: '只允许 HTTPS 协议' };
+  }
+
+  // 禁止内网地址
+  const hostname = parsedUrl.hostname.toLowerCase();
+  const privatePatterns = [
+    /^localhost$/i,
+    /^127\./,
+    /^10\./,
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+    /^192\.168\./,
+    /^0\./,
+    /^169\.254\./,
+    /^::1$/,
+    /^fc00:/i,
+    /^fe80:/i,
+  ];
+
+  for (const pattern of privatePatterns) {
+    if (pattern.test(hostname)) {
+      return { valid: false, error: '不允许访问内网地址' };
+    }
+  }
+
+  // 检查白名单
+  const isAllowed = ALLOWED_CUSTOM_DOMAINS.some(domain => 
+    hostname === domain || hostname.endsWith('.' + domain)
+  );
+
+  if (!isAllowed) {
+    return { 
+      valid: false, 
+      error: `不在允许的 API 域名白名单中。允许的域名: ${ALLOWED_CUSTOM_DOMAINS.join(', ')}` 
+    };
+  }
+
+  return { valid: true };
+}
+
 // 默认模型名称
 const DEFAULT_MODELS: Record<string, string> = {
   deepseek: 'deepseek-chat',
@@ -47,12 +119,24 @@ export async function POST(request: NextRequest) {
     }
 
     // 确定API端点
-    const endpoint = model === 'custom' ? customApiUrl : AI_ENDPOINTS[model];
-    if (!endpoint) {
-      return NextResponse.json(
-        { error: '无效的模型配置' },
-        { status: 400 }
-      );
+    let endpoint: string;
+    if (model === 'custom') {
+      const validation = validateCustomApiUrl(customApiUrl);
+      if (!validation.valid) {
+        return NextResponse.json(
+          { error: validation.error },
+          { status: 400 }
+        );
+      }
+      endpoint = customApiUrl;
+    } else {
+      endpoint = AI_ENDPOINTS[model];
+      if (!endpoint) {
+        return NextResponse.json(
+          { error: '无效的模型配置' },
+          { status: 400 }
+        );
+      }
     }
 
     // 构建请求消息
