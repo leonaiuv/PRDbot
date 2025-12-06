@@ -38,7 +38,12 @@ export default function PRDPage() {
   const projectId = params.id as string;
   const shouldGenerate = searchParams.get('generate') === 'true';
   
-  const { currentProject, loadProject, addMessage, updatePRDContent, setProjectStatus, isLoading } = useProjectStore();
+  const { loadProject, addMessage, updatePRDContent, setProjectStatus, isLoading } = useProjectStore();
+  // P2: 使用 selector 从 projects 派生 currentProject
+  const currentProject = useProjectStore(state => {
+    if (!state.currentProjectId) return null;
+    return state.projects.find(p => p.id === state.currentProjectId) || null;
+  });
   const { settings, loadSettings } = useSettingsStore();
   
   // 使用全局PRD生成状态管理
@@ -102,11 +107,17 @@ export default function PRDPage() {
       // 检查是否有持久化的中断任务
       const persisted = await loadPersistedTask(projectId);
       if (persisted && (persisted.phase === 'generating' || persisted.phase === 'error')) {
-        // 边界情况：如果项目已有完整内容，说明上次生成实际成功了，清除错误状态
-        if (currentProject.prdContent && currentProject.prdContent.trim().length > 0) {
+        // P3: 边界条件修复 - 检查项目是否有完整内容
+        // 使用更严格的判断：内容必须存在且有实质性内容（至少 50 个字符）
+        const hasValidContent = currentProject.prdContent && 
+          currentProject.prdContent.trim().length > 50;
+        
+        if (hasValidContent) {
+          // 项目已有完整内容，说明上次生成实际成功了，清除错误状态
           await clearTask(projectId);
           return;
         }
+        
         // 恢复任务状态
         await restoreTask(projectId);
         if (persisted.phase === 'generating') {

@@ -59,18 +59,16 @@ export default function ChatPage() {
   const router = useRouter();
   const projectId = params.id as string;
   
-  const { currentProject, loadProject, addMessage, updateProject, setProjectStatus, isLoading } = useProjectStore();
+  const { loadProject, addMessage, setProjectStatus, isLoading } = useProjectStore();
+  // P2: 使用 selector 从 projects 派生 currentProject
+  const currentProject = useProjectStore(state => {
+    if (!state.currentProjectId) return null;
+    return state.projects.find(p => p.id === state.currentProjectId) || null;
+  });
   const { settings, loadSettings } = useSettingsStore();
+  
+  // 使用按 projectId 隔离的 Chat Store
   const { 
-    isStreaming, 
-    generationPhase,
-    currentStep,
-    stepIndex,
-    elapsedTime,
-    pendingSelectors,
-    questionMeta,
-    canCancel,
-    error,
     startGeneration,
     advanceStep,
     setPendingSelectors,
@@ -83,6 +81,19 @@ export default function ChatPage() {
     setGenerationPhase,
   } = useChatStore();
   
+  // 订阅当前项目的任务状态
+  const chatTask = useChatStore(state => state.tasks[projectId]);
+  const isStreaming = chatTask?.isStreaming ?? false;
+  const generationPhase = chatTask?.generationPhase ?? 'idle';
+  const currentStep = chatTask?.currentStep ?? 'understanding';
+  const stepIndex = chatTask?.stepIndex ?? 0;
+  const elapsedTime = chatTask?.elapsedTime ?? 0;
+  const pendingSelectorsFromStore = chatTask?.pendingSelectors ?? [];
+  const questionMeta = chatTask?.questionMeta ?? null;
+  const canCancel = chatTask?.canCancel ?? true;
+  const error = chatTask?.error ?? null;
+  const retryParams = chatTask?.retryParams ?? null;
+  
   const [input, setInput] = useState('');
   const [mounted, setMounted] = useState(false);
   const [currentSelectors, setCurrentSelectors] = useState<SelectorData[]>([]);
@@ -93,6 +104,8 @@ export default function ChatPage() {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const stepTimerRef = useRef<NodeJS.Timeout | null>(null);
   const elapsedTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // P1: 草稿保存防抖定时器
+  const draftSaveTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // 加载项目和设置
   useEffect(() => {
@@ -101,8 +114,8 @@ export default function ChatPage() {
     loadSettings();
     // 组件卸载时安全中断并保存草稿
     return () => {
-      // 使用abortAndReset安全中断进行中的请求
-      abortAndReset();
+      // 使用abortAndReset安全中断进行中的请求（按projectId隔离）
+      abortAndReset(projectId);
     };
   }, [projectId, loadProject, loadSettings, abortAndReset]);
 
@@ -117,8 +130,8 @@ export default function ChatPage() {
         setCurrentSelectors(draft.currentSelectors);
         setSelectionsMap(draft.selectionsMap);
         setInput(draft.inputDraft || '');
-        setPendingSelectors(draft.currentSelectors, draft.questionMeta || undefined);
-        setGenerationPhase(draft.generationPhase || 'interactive');
+        setPendingSelectors(projectId, draft.currentSelectors, draft.questionMeta || undefined);
+        setGenerationPhase(projectId, draft.generationPhase || 'interactive');
         setShowStatusBar(true);
         return;
       }
@@ -141,8 +154,8 @@ export default function ChatPage() {
               initialMap[s.id] = [];
             });
             setSelectionsMap(initialMap);
-            setPendingSelectors(msg.selectors);
-            setGenerationPhase('interactive');
+            setPendingSelectors(projectId, msg.selectors);
+            setGenerationPhase(projectId, 'interactive');
             setShowStatusBar(true);
           }
           break;
@@ -158,7 +171,7 @@ export default function ChatPage() {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
     }
-  }, [currentProject?.conversation, generationPhase, pendingSelectors]);
+  }, [currentProject?.conversation, generationPhase, pendingSelectorsFromStore]);
 
   // 发送初始消息
   useEffect(() => {
@@ -167,7 +180,15 @@ export default function ChatPage() {
     }
   }, [currentProject, settings]);
 
-  // 进度模拟器 - 当开始生成时启动
+  // 进度模拟器 - 当开始生成时启动（使用 ref 存储函数依赖，避免不必要的定时器重建）
+  const advanceStepRef = useRef(() => advanceStep(projectId));
+  const updateElapsedTimeRef = useRef(() => updateElapsedTime(projectId));
+  
+  useEffect(() => {
+    advanceStepRef.current = () => advanceStep(projectId);
+    updateElapsedTimeRef.current = () => updateElapsedTime(projectId);
+  }, [projectId, advanceStep, updateElapsedTime]);
+  
   useEffect(() => {
     if (generationPhase === 'generating') {
       // 清理之前的定时器
@@ -176,12 +197,12 @@ export default function ChatPage() {
       
       // 启动已用时间计时器
       elapsedTimerRef.current = setInterval(() => {
-        updateElapsedTime();
+        updateElapsedTimeRef.current();
       }, 1000);
       
       // 启动步骤进度模拟器（每3秒推进一步）
       stepTimerRef.current = setInterval(() => {
-        advanceStep();
+        advanceStepRef.current();
       }, 3500);
     } else {
       // 非生成状态时清理定时器
@@ -199,7 +220,7 @@ export default function ChatPage() {
       if (stepTimerRef.current) clearInterval(stepTimerRef.current);
       if (elapsedTimerRef.current) clearInterval(elapsedTimerRef.current);
     };
-  }, [generationPhase, advanceStep, updateElapsedTime]);
+  }, [generationPhase]); // 仅依赖 generationPhase
 
   // 发送消息到AI（后端校验模式 - 后端聚合并校验响应，前端等待校验结果后统一渲染）
   const sendMessage = useCallback(async (content: string) => {
@@ -218,7 +239,7 @@ export default function ChatPage() {
     await addMessage(userMessage);
 
     // 开始生成（启动生成状态、清空待渲染选择器）
-    startGeneration({ content });
+    const abortController = startGeneration(projectId, { content });
     setCurrentSelectors([]);
     setShowStatusBar(true);
 
@@ -236,7 +257,8 @@ export default function ChatPage() {
           model: settings.defaultModel,
           apiKey: settings.apiKeys[settings.defaultModel],
           customApiUrl: settings.customApiUrl
-        })
+        }),
+        signal: abortController.signal, // P1: 传递 signal 以支持取消
       });
 
       if (!response.ok) {
@@ -314,7 +336,7 @@ export default function ChatPage() {
 
         // 设置待渲染的选择器
         if (selectors.length > 0) {
-          setPendingSelectors(selectors, meta);
+          setPendingSelectors(projectId, selectors, meta);
           setCurrentSelectors(selectors);
           // 初始化所有选择器的状态为空数组
           const initialMap: Record<string, string[]> = {};
@@ -325,7 +347,7 @@ export default function ChatPage() {
         }
 
         // 完成生成，进入可交互状态
-        completeGeneration();
+        completeGeneration(projectId);
 
       } else {
         // 校验失败，显示错误信息和原始内容
@@ -348,36 +370,58 @@ export default function ChatPage() {
         await addMessage(aiMessage);
 
         // 设置错误状态
-        setGenerationError(errorMsg);
+        setGenerationError(projectId, errorMsg);
       }
 
     } catch (error) {
+      // 检查是否是取消操作
+      if (error instanceof Error && error.name === 'AbortError') {
+        // 用户取消，不显示错误
+        return;
+      }
       console.error('Chat error:', error);
       const errorMessage = error instanceof Error ? error.message : '发送失败';
       toast.error(errorMessage);
-      setGenerationError(errorMessage);
+      setGenerationError(projectId, errorMessage);
     }
-  }, [currentProject, settings, addMessage, startGeneration, setPendingSelectors, completeGeneration, setGenerationError]);
+  }, [projectId, currentProject, settings, addMessage, startGeneration, setPendingSelectors, completeGeneration, setGenerationError]);
 
-  // 处理单个选择器的值变更（受控模式）
-  const handleSelectorChange = useCallback((selectorId: string, values: string[]) => {
-    setSelectionsMap(prev => {
-      const newMap = {
-        ...prev,
-        [selectorId]: values
-      };
-      // 异步持久化草稿（不阻塞）
+  // P1: 草稿保存 - 使用 useEffect 监听变化后统一保存，避免闭包捕获旧值和竞态条件
+  useEffect(() => {
+    // 仅在有选择器时才保存草稿
+    if (currentSelectors.length === 0) return;
+    
+    // 清除之前的定时器
+    if (draftSaveTimerRef.current) {
+      clearTimeout(draftSaveTimerRef.current);
+    }
+    
+    // 防抖 300ms 后保存
+    draftSaveTimerRef.current = setTimeout(() => {
       chatDraftsDB.save({
         projectId,
         currentSelectors,
-        selectionsMap: newMap,
+        selectionsMap,
         questionMeta,
         generationPhase,
         inputDraft: input,
       }).catch(console.error);
-      return newMap;
-    });
-  }, [projectId, currentSelectors, questionMeta, generationPhase, input]);
+    }, 300);
+    
+    return () => {
+      if (draftSaveTimerRef.current) {
+        clearTimeout(draftSaveTimerRef.current);
+      }
+    };
+  }, [projectId, currentSelectors, selectionsMap, questionMeta, generationPhase, input]);
+
+  // 处理单个选择器的值变更（受控模式）- 仅更新状态，保存由 useEffect 统一处理
+  const handleSelectorChange = useCallback((selectorId: string, values: string[]) => {
+    setSelectionsMap(prev => ({
+      ...prev,
+      [selectorId]: values
+    }));
+  }, []);
 
   // 检查是否所有必填项都已填写
   const allRequiredFilled = useMemo(() => {
@@ -426,7 +470,7 @@ export default function ChatPage() {
     // 清空当前选择器和选择状态
     setCurrentSelectors([]);
     setSelectionsMap({});
-    resetGeneration();
+    resetGeneration(projectId);
     
     // 删除草稿（已提交）
     await chatDraftsDB.delete(projectId);
@@ -448,7 +492,7 @@ export default function ChatPage() {
 
     // 清空当前选择器（因为即将发送新消息）
     setCurrentSelectors([]);
-    resetGeneration();
+    resetGeneration(projectId);
     
     // 删除草稿（已提交）
     await chatDraftsDB.delete(projectId);
@@ -460,18 +504,17 @@ export default function ChatPage() {
 
   // 处理取消生成
   const handleCancelGeneration = useCallback(() => {
-    cancelGeneration();
+    cancelGeneration(projectId);
     toast.info('已取消生成');
-  }, [cancelGeneration]);
+  }, [projectId, cancelGeneration]);
 
   // 处理重试
   const handleRetry = useCallback(() => {
-    const { retryParams } = useChatStore.getState();
     if (retryParams?.content) {
-      resetGeneration();
+      resetGeneration(projectId);
       sendMessage(retryParams.content);
     }
-  }, [sendMessage, resetGeneration]);
+  }, [projectId, retryParams, sendMessage, resetGeneration]);
 
   // 关闭状态栏
   const handleDismissStatusBar = useCallback(() => {
@@ -621,7 +664,7 @@ export default function ChatPage() {
           {showStatusBar && (generationPhase === 'interactive' || generationPhase === 'error' || generationPhase === 'timeout') && (
             <GenerationStatusBar
               phase={generationPhase}
-              selectorCount={pendingSelectors.length}
+              selectorCount={pendingSelectorsFromStore.length}
               error={error}
               onRetry={handleRetry}
               onDismiss={handleDismissStatusBar}

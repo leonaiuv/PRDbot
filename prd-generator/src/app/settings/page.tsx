@@ -21,7 +21,7 @@ import { useSettingsStore } from '@/store';
 import { AI_MODELS } from '@/types';
 
 export default function SettingsPage() {
-  const { settings, loadSettings, updateSettings, setApiKey } = useSettingsStore();
+  const { settings, loadSettings, updateSettings } = useSettingsStore();
   const [mounted, setMounted] = useState(false);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
@@ -45,15 +45,9 @@ export default function SettingsPage() {
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      // 保存所有API Keys
-      for (const [provider, key] of Object.entries(apiKeys)) {
-        if (key) {
-          await setApiKey(provider, key);
-        }
-      }
-
-      // 保存其他设置
+      // P3: 合并为一次原子操作，避免多次 DB 写入
       await updateSettings({
+        apiKeys,
         defaultModel,
         customApiUrl: customUrl,
       });
