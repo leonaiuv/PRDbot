@@ -55,7 +55,10 @@ export default function PRDPage() {
   const [mounted, setMounted] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [isGenerating, setIsGenerating] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const [mobileTab, setMobileTab] = useState<'chat' | 'prd'>('chat');
+  const scrollViewportRef = useRef<HTMLDivElement>(null);
+  const editorContainerRef = useRef<HTMLDivElement>(null);
+  const [editorHeight, setEditorHeight] = useState(400);
 
   // 加载项目和设置
   useEffect(() => {
@@ -63,6 +66,25 @@ export default function PRDPage() {
     loadProject(projectId);
     loadSettings();
   }, [projectId, loadProject, loadSettings]);
+
+  // 聊天区自动滚动到底部
+  useEffect(() => {
+    if (scrollViewportRef.current) {
+      scrollViewportRef.current.scrollTop = scrollViewportRef.current.scrollHeight;
+    }
+  }, [currentProject?.conversation, streamContent, isStreaming]);
+
+  // 计算编辑器高度
+  useEffect(() => {
+    const updateEditorHeight = () => {
+      if (editorContainerRef.current) {
+        setEditorHeight(editorContainerRef.current.clientHeight);
+      }
+    };
+    updateEditorHeight();
+    window.addEventListener('resize', updateEditorHeight);
+    return () => window.removeEventListener('resize', updateEditorHeight);
+  }, [editMode]);
 
   // 自动生成PRD
   useEffect(() => {
@@ -108,18 +130,40 @@ export default function PRDPage() {
 
       const decoder = new TextDecoder();
       let fullContent = '';
+      let sseBuffer = ''; // SSE分片缓冲，避免跨chunk截断
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(line => line.startsWith('data: '));
+        // 使用stream模式解码，正确处理多字节UTF-8字符
+        sseBuffer += decoder.decode(value, { stream: true });
+        
+        // 按换行符分割，保留最后一个可能不完整的行
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() || ''; // 保留未完成的行
 
         for (const line of lines) {
-          const data = line.replace('data: ', '');
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
           if (data === '[DONE]') continue;
 
+          try {
+            const { content } = JSON.parse(data);
+            if (content) {
+              fullContent += content;
+              appendStreamContent(content);
+            }
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+      }
+      
+      // 处理buffer中可能残留的最后一行
+      if (sseBuffer.startsWith('data: ')) {
+        const data = sseBuffer.slice(6);
+        if (data !== '[DONE]') {
           try {
             const { content } = JSON.parse(data);
             if (content) {
@@ -205,18 +249,40 @@ ${currentProject.prdContent}
 
       const decoder = new TextDecoder();
       let fullContent = '';
+      let sseBuffer = ''; // SSE分片缓冲，避免跨chunk截断
 
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n').filter(line => line.startsWith('data: '));
+        // 使用stream模式解码，正确处理多字节UTF-8字符
+        sseBuffer += decoder.decode(value, { stream: true });
+        
+        // 按换行符分割，保留最后一个可能不完整的行
+        const lines = sseBuffer.split('\n');
+        sseBuffer = lines.pop() || ''; // 保留未完成的行
 
         for (const line of lines) {
-          const data = line.replace('data: ', '');
+          if (!line.startsWith('data: ')) continue;
+          const data = line.slice(6);
           if (data === '[DONE]') continue;
 
+          try {
+            const { content } = JSON.parse(data);
+            if (content) {
+              fullContent += content;
+              appendStreamContent(content);
+            }
+          } catch (e) {
+            // 忽略解析错误
+          }
+        }
+      }
+      
+      // 处理buffer中可能残留的最后一行
+      if (sseBuffer.startsWith('data: ')) {
+        const data = sseBuffer.slice(6);
+        if (data !== '[DONE]') {
           try {
             const { content } = JSON.parse(data);
             if (content) {
@@ -290,7 +356,7 @@ ${currentProject.prdContent}
     <div className="h-screen flex flex-col">
       {/* 顶部导航 */}
       <header className="flex-shrink-0 border-b bg-background">
-        <div className="container flex h-14 items-center justify-between">
+        <div className="container px-4 md:px-6 flex h-14 items-center justify-between">
           <div className="flex items-center gap-4">
             <Link href="/">
               <Button variant="ghost" size="icon">
@@ -332,15 +398,43 @@ ${currentProject.prdContent}
         </div>
       </header>
 
+      {/* 移动端Tab切换 */}
+      <div className="md:hidden border-b">
+        <div className="flex">
+          <button
+            onClick={() => setMobileTab('chat')}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              mobileTab === 'chat'
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted-foreground'
+            }`}
+          >
+            对话区
+          </button>
+          <button
+            onClick={() => setMobileTab('prd')}
+            className={`flex-1 py-2 text-sm font-medium transition-colors ${
+              mobileTab === 'prd'
+                ? 'border-b-2 border-primary text-primary'
+                : 'text-muted-foreground'
+            }`}
+          >
+            PRD 文档
+          </button>
+        </div>
+      </div>
+
       {/* 主内容区域 - 左右分栏 */}
-      <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex flex-col md:flex-row overflow-hidden min-h-0">
         {/* 左侧对话区 */}
-        <div className="w-2/5 border-r flex flex-col">
+        <div className={`w-full md:w-2/5 border-r flex flex-col min-h-0 ${
+          mobileTab === 'chat' ? 'flex' : 'hidden md:flex'
+        }`}>
           <div className="p-2 border-b bg-muted/50">
             <h2 className="text-sm font-medium text-center">对话区</h2>
           </div>
           
-          <ScrollArea className="flex-1 p-4" ref={scrollRef}>
+          <ScrollArea className="flex-1 min-h-0 p-4" viewportRef={scrollViewportRef}>
             <div className="space-y-4">
               {currentProject.conversation.slice(-10).map((message) => (
                 <div
@@ -426,7 +520,9 @@ ${currentProject.prdContent}
         </div>
 
         {/* 右侧PRD预览/编辑区 */}
-        <div className="flex-1 flex flex-col">
+        <div className={`flex-1 flex flex-col min-h-0 ${
+          mobileTab === 'prd' ? 'flex' : 'hidden md:flex'
+        }`}>
           <div className="p-2 border-b bg-muted/50 flex items-center justify-between">
             <h2 className="text-sm font-medium">PRD 文档</h2>
             <div className="flex items-center gap-2">
@@ -462,18 +558,18 @@ ${currentProject.prdContent}
             </div>
           </div>
 
-          <div className="flex-1 overflow-hidden">
+          <div className="flex-1 overflow-hidden min-h-0">
             {editMode ? (
-              <div data-color-mode="light" className="h-full">
+              <div ref={editorContainerRef} data-color-mode="light" className="h-full flex flex-col min-h-0">
                 <MDEditor
                   value={prdContent}
                   onChange={handlePRDChange}
-                  height="100%"
+                  height={editorHeight}
                   preview="edit"
                 />
               </div>
             ) : (
-              <ScrollArea className="h-full p-6">
+              <ScrollArea className="h-full min-h-0 p-6">
                 <div className="prose prose-sm dark:prose-invert max-w-none">
                   {prdContent ? (
                     <ReactMarkdown remarkPlugins={[remarkGfm]}>

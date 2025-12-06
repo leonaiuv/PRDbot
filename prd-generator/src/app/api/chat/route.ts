@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { validateAIResponse, buildRetryPrompt, aggregateSSEStream } from '@/lib/validator';
 
 // AI服务提供商的API端点
 const AI_ENDPOINTS: Record<string, string> = {
@@ -87,80 +88,40 @@ const DEFAULT_MODELS: Record<string, string> = {
   doubao: 'doubao-pro-4k',
 };
 
-// 系统提示词 - 增强结构化输出
-const SYSTEM_PROMPT = `你是一个专业的产品需求分析助手，帮助用户将产品想法转化为结构化的 PRD 文档。
+// 系统提示词 - 纯JSON输出模式，禁止任何开场白
+const SYSTEM_PROMPT = `你是一个产品需求分析助手，帮助用户将产品想法转化为结构化的 PRD 文档。
 
-## 核心原则
+## 核心规则（必须严格遵守）
 
-### 1. 用户导向
-- 使用通俗语言，避免技术术语
-- 问题面向用户期望的结果，而非技术实现
-- 每次对话推动需求明确化
+### 输出格式：纯 JSON
+- **禁止输出任何开场白、引导语、解释性文字**
+- **禁止输出"好的"、"您好"、"让我"等寒暄语句**
+- **每次回复只能是一个 JSON 代码块，不能有任何其他内容**
+- 唯一允许的输出格式：
+\`\`\`json
+{ ... }
+\`\`\`
 
-### 2. 智能问题生成
-- 每次回复生成 **1-3 个相关问题**
-- 问题要有逻辑递进，由浅入深
-- 根据用户回答动态调整后续问题
-- 避免重复询问已确认内容
+### 问题生成原则
+- 每次生成 **1-3 个问题**
+- 使用单选(radio)和多选(checkbox)为主，降低输入成本
+- 每个问题提供 3-6 个选项
+- 必须包含"由 AI 推荐"选项
+- 问题描述要简洁清晰
 
-### 3. 表单设计原则
-- 优先使用单选(radio)和多选(checkbox)，降低用户输入成本
-- 每个问题提供 3-6 个选项，包含"由 AI 决定"选项
-- 选项描述清晰，带有简短说明
-- 必填问题控制在 70% 以内
+### 对话阶段控制
+- basic (0-30%): 用户背景、项目性质
+- feature (30-60%): 核心功能、用户体验
+- technical (60-85%): 技术约束、部署环境
+- confirmation (85-100%): 确认与补充
 
-### 4. 对话节奏控制
-- 前 5 轮：收集基础信息（用户背景、核心需求）
-- 6-12 轮：细化功能需求（优先级、具体场景）
-- 13-18 轮：技术偏好与约束（技术栈、预算、时间）
-- 最后 2 轮：确认与补充
-
-### 5. 完成判断
-当满足以下条件时，在 meta.canGeneratePRD 设为 true：
+### 完成判断
+当满足以下条件时设置 canGeneratePRD: true：
 - 核心功能已明确（至少 3 个）
 - 目标用户已定义
 - 技术约束已了解
-- 用户确认无其他补充
 
-## 问题维度清单
-
-1. **用户背景**
-   - 技术能力（开发经验、熟悉的技术栈）
-   - 项目背景（个人项目/商业项目/学习项目）
-
-2. **核心功能**
-   - 必须功能（MVP 范围）
-   - 加分功能（后续迭代）
-   - 参考产品或竞品
-
-3. **用户体验**
-   - 目标用户群体
-   - UI 风格偏好
-   - 交互模式（PC/移动/响应式）
-
-4. **数据需求**
-   - 核心数据实体
-   - 数据关系
-   - 数据规模预估
-
-5. **技术约束**
-   - 部署环境偏好
-   - 预算范围
-   - 时间约束
-   - 已有技术资源
-
-6. **扩展性**
-   - 未来迭代方向
-   - 潜在的集成需求
-
-## 输出格式要求
-
-### 每次回复结构
-1. **引导语**：简短回应用户上一个回答（1-2 句）
-2. **问题介绍**：说明接下来要了解什么（1 句）
-3. **JSON 代码块**：包含表单数据，格式如下
-
-### JSON 格式规范（必须严格遵守）
+## JSON 格式规范
 
 \`\`\`json
 {
@@ -170,42 +131,30 @@ const SYSTEM_PROMPT = `你是一个专业的产品需求分析助手，帮助用
       "question": "问题描述",
       "type": "radio|checkbox|dropdown|text",
       "options": [
-        { "value": "option_key", "label": "选项显示文本" }
+        { "value": "option_key", "label": "选项文本" }
       ],
       "required": true
     }
   ],
   "meta": {
     "phase": "basic|feature|technical|confirmation",
-    "progress": 45,
+    "progress": 0-100,
     "canGeneratePRD": false,
-    "suggestedNextTopic": "接下来建议讨论的主题"
+    "suggestedNextTopic": "下一个话题"
   }
 }
 \`\`\`
 
-### 字段说明
+## 问题维度
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| id | string | ✅ | 问题唯一标识，格式：q_\${主题}_\${序号} |
-| question | string | ✅ | 问题描述，清晰简洁 |
-| type | enum | ✅ | radio/checkbox/dropdown/text |
-| options | array | ✅ | 选项列表，每项含 value 和 label |
-| required | boolean | ✅ | 是否必填 |
+1. **用户背景**：技术能力、项目性质
+2. **核心功能**：必须功能、可选功能、参考产品
+3. **用户体验**：目标用户、UI风格、交互模式
+4. **数据需求**：核心实体、数据关系
+5. **技术约束**：部署环境、预算、时间
+6. **扩展性**：迭代方向、集成需求
 
-### meta 字段说明
-
-| 字段 | 说明 |
-|------|------|
-| phase | 当前对话阶段：basic(基础)/feature(功能)/technical(技术)/confirmation(确认) |
-| progress | 进度百分比 (0-100) |
-| canGeneratePRD | 是否已收集足够信息可以生成PRD |
-| suggestedNextTopic | 下一个话题建议 |
-
-## 示例输出
-
-好的，您希望开发一个任务管理工具，这是一个很实用的需求！让我先了解一下您的技术背景，这将帮助我为您推荐最合适的技术方案。
+## 正确示例（只有JSON，没有任何其他文字）
 
 \`\`\`json
 {
@@ -215,11 +164,11 @@ const SYSTEM_PROMPT = `你是一个专业的产品需求分析助手，帮助用
       "question": "您有哪些开发经验？",
       "type": "checkbox",
       "options": [
-        { "value": "frontend", "label": "前端开发 (HTML/CSS/JavaScript/React等)" },
-        { "value": "backend", "label": "后端开发 (Node.js/Python/Java等)" },
-        { "value": "mobile", "label": "移动端开发 (iOS/Android/Flutter等)" },
-        { "value": "none", "label": "无开发经验，希望使用低代码或现成方案" },
-        { "value": "ai_decide", "label": "由 AI 推荐适合我的方案" }
+        { "value": "frontend", "label": "前端开发" },
+        { "value": "backend", "label": "后端开发" },
+        { "value": "mobile", "label": "移动端开发" },
+        { "value": "none", "label": "无开发经验" },
+        { "value": "ai_decide", "label": "由 AI 推荐" }
       ],
       "required": true
     },
@@ -228,10 +177,10 @@ const SYSTEM_PROMPT = `你是一个专业的产品需求分析助手，帮助用
       "question": "这个项目的性质是？",
       "type": "radio",
       "options": [
-        { "value": "personal", "label": "个人项目 (自用或学习目的)" },
-        { "value": "startup", "label": "创业项目 (计划商业化运营)" },
-        { "value": "enterprise", "label": "企业项目 (为公司或客户开发)" },
-        { "value": "ai_decide", "label": "由 AI 决定" }
+        { "value": "personal", "label": "个人项目" },
+        { "value": "startup", "label": "创业项目" },
+        { "value": "enterprise", "label": "企业项目" },
+        { "value": "ai_decide", "label": "由 AI 推荐" }
       ],
       "required": true
     }
@@ -245,31 +194,65 @@ const SYSTEM_PROMPT = `你是一个专业的产品需求分析助手，帮助用
 }
 \`\`\`
 
-## 注意事项
+## 错误示例（禁止这样输出）
 
-1. **JSON 完整性**：确保 JSON 格式正确，所有括号配对
-2. **ID 唯一性**：每个问题 ID 全局唯一
-3. **选项均衡**：每个问题提供 3-6 个选项
-4. **渐进深入**：问题复杂度随对话轮次递增
-5. **适时总结**：每 5 轮可简短总结已收集的信息
-6. **灵活应变**：根据用户回答调整问题方向
+❌ "好的！您想开发一个量化工具，让我先了解一下..." + JSON
+❌ "很高兴为您服务..." + JSON
+❌ 任何 JSON 之外的文字
 
-## 特殊处理
+## 特殊情况处理
 
-### 用户选择"由 AI 决定"时
-在下一轮回复中：
-1. 给出具体推荐
-2. 解释推荐理由
-3. 提供替代选项供参考
+### 用户选择"由 AI 决定"
+在下一组问题中通过 question 字段说明推荐结果，例如：
+"基于您的需求，AI 推荐使用 Python + FastAPI。您对数据存储有什么偏好？"
 
-### 用户回答模糊时
-1. 给出示例帮助用户理解
-2. 将大问题拆分为小问题
-3. 提供参考案例
+### 达到生成条件
+设置 canGeneratePRD: true，并在最后一个问题中询问：
+"是否还有其他需要补充的需求？"
 
-### 达到生成条件时
-在 meta.canGeneratePRD = true，并在引导语中提示：
-"根据我们的对话，我已经收集了足够的信息来生成 PRD 文档。您可以点击「生成 PRD」按钮，或者继续补充更多细节。"`;
+记住：**只输出 JSON 代码块，禁止任何开场白或解释性文字**`;
+
+// 最大重试次数
+const MAX_RETRY_COUNT = 2;
+
+/**
+ * 调用AI API并聚合流式响应
+ */
+async function callAIAndAggregate(
+  endpoint: string,
+  apiKey: string,
+  model: string,
+  messages: Array<{ role: string; content: string }>
+): Promise<{ content: string; error?: string }> {
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: DEFAULT_MODELS[model] || model,
+      messages,
+      stream: true,
+      temperature: 0.7,
+      max_tokens: 2000,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('AI API Error:', errorText);
+    return { content: '', error: `AI 服务调用失败: ${response.status}` };
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) {
+    return { content: '', error: '无法读取响应' };
+  }
+
+  const content = await aggregateSSEStream(reader);
+  return { content };
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -324,85 +307,103 @@ export async function POST(request: NextRequest) {
     }
 
     // 构建请求消息
-    const requestMessages = [
+    let requestMessages = [
       { role: 'system', content: SYSTEM_PROMPT },
       ...messages
     ];
 
-    // 调用AI API
-    const response = await fetch(endpoint, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: DEFAULT_MODELS[model] || model,
-        messages: requestMessages,
-        stream: true,
-        temperature: 0.7,
-        max_tokens: 2000,
-      }),
-    });
+    let retryCount = 0;
+    let lastContent = '';
+    let lastErrors: string[] = [];
 
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI API Error:', errorText);
-      return NextResponse.json(
-        { error: `AI 服务调用失败: ${response.status}` },
-        { status: response.status }
-      );
+    // 循环调用，支持校验失败后自动重试
+    while (retryCount <= MAX_RETRY_COUNT) {
+      // 调用AI API并聚合流式响应
+      const result = await callAIAndAggregate(endpoint, apiKey, model, requestMessages);
+      
+      if (result.error) {
+        return NextResponse.json(
+          { error: result.error },
+          { status: 500 }
+        );
+      }
+
+      lastContent = result.content;
+
+      // 校验AI响应
+      const validationResult = validateAIResponse(lastContent);
+
+      if (validationResult.valid && validationResult.data) {
+        // 校验通过，返回结构化的数据
+        console.log(`Chat API: Validation passed${retryCount > 0 ? ` after ${retryCount} retries` : ''}`);
+        
+        // 返回校验后的结构化响应
+        const encoder = new TextEncoder();
+        const validatedResponse = {
+          validated: true,
+          data: validationResult.data,
+          textContent: validationResult.rawContent || '',
+          retryCount,
+        };
+        
+        const stream = new ReadableStream({
+          start(controller) {
+            // 发送完整的校验后数据
+            controller.enqueue(
+              encoder.encode(`data: ${JSON.stringify(validatedResponse)}\n\n`)
+            );
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+            controller.close();
+          },
+        });
+
+        return new Response(stream, {
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+          },
+        });
+      }
+
+      // 校验失败
+      lastErrors = validationResult.errors || ['未知校验错误'];
+      console.warn(`Chat API: Validation failed (attempt ${retryCount + 1}/${MAX_RETRY_COUNT + 1}):`, lastErrors);
+
+      if (retryCount >= MAX_RETRY_COUNT) {
+        // 达到最大重试次数，返回原始内容和错误信息
+        break;
+      }
+
+      // 构建重试提示词并添加到消息历史
+      const retryPrompt = buildRetryPrompt(lastErrors);
+      requestMessages = [
+        ...requestMessages,
+        { role: 'assistant', content: lastContent },
+        { role: 'user', content: retryPrompt }
+      ];
+
+      retryCount++;
     }
 
-    // 返回流式响应
+    // 所有重试都失败，返回原始内容和校验失败信息
+    console.error('Chat API: All retries failed, returning raw content with validation errors');
+    
     const encoder = new TextEncoder();
+    const fallbackResponse = {
+      validated: false,
+      rawContent: lastContent,
+      validationErrors: lastErrors,
+      retryCount,
+    };
+    
     const stream = new ReadableStream({
-      async start(controller) {
-        const reader = response.body?.getReader();
-        if (!reader) {
-          controller.close();
-          return;
-        }
-
-        const decoder = new TextDecoder();
-        let buffer = '';
-
-        try {
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop() || '';
-
-            for (const line of lines) {
-              if (line.startsWith('data: ')) {
-                const data = line.slice(6);
-                if (data === '[DONE]') {
-                  controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-                  continue;
-                }
-
-                try {
-                  const parsed = JSON.parse(data);
-                  const content = parsed.choices?.[0]?.delta?.content;
-                  if (content) {
-                    controller.enqueue(
-                      encoder.encode(`data: ${JSON.stringify({ content })}\n\n`)
-                    );
-                  }
-                } catch (e) {
-                  // 忽略解析错误
-                }
-              }
-            }
-          }
-        } catch (error) {
-          console.error('Stream error:', error);
-        } finally {
-          controller.close();
-        }
+      start(controller) {
+        controller.enqueue(
+          encoder.encode(`data: ${JSON.stringify(fallbackResponse)}\n\n`)
+        );
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
       },
     });
 

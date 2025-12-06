@@ -17,29 +17,81 @@ import {
 } from '@/components/ui/select';
 import type { SelectorData, SelectorOption } from '@/types';
 
-interface SmartSelectorProps {
+// 受控模式 Props（推荐：用于多选择器统一提交场景）
+interface ControlledSelectorProps {
+  selector: SelectorData;
+  value: string[];
+  onChange: (values: string[]) => void;
+  disabled?: boolean;
+  showSubmitButton?: false; // 受控模式不显示单独提交按钮
+}
+
+// 非受控模式 Props（兼容：用于单个选择器独立提交场景）
+interface UncontrolledSelectorProps {
   selector: SelectorData;
   onSubmit: (values: string[]) => void;
   disabled?: boolean;
+  showSubmitButton?: true;
+  value?: never;
+  onChange?: never;
 }
 
-export function SmartSelector({ selector, onSubmit, disabled }: SmartSelectorProps) {
-  const [selectedValues, setSelectedValues] = useState<string[]>([]);
-  const [textValue, setTextValue] = useState('');
+type SmartSelectorProps = ControlledSelectorProps | UncontrolledSelectorProps;
 
-  const handleSubmit = () => {
-    if (selector.type === 'text') {
-      onSubmit([textValue]);
+// 判断是否为受控模式
+function isControlled(props: SmartSelectorProps): props is ControlledSelectorProps {
+  return 'onChange' in props && props.onChange !== undefined;
+}
+
+export function SmartSelector(props: SmartSelectorProps) {
+  const { selector, disabled } = props;
+  
+  // 内部状态（仅用于非受控模式）
+  const [internalValues, setInternalValues] = useState<string[]>([]);
+  const [internalTextValue, setInternalTextValue] = useState('');
+  
+  // 根据模式获取当前值
+  const currentValues = isControlled(props) ? props.value : internalValues;
+  const currentTextValue = isControlled(props) 
+    ? (props.value[0] || '') 
+    : internalTextValue;
+
+  // 处理值变更
+  const handleValuesChange = (values: string[]) => {
+    if (isControlled(props)) {
+      props.onChange(values);
     } else {
-      onSubmit(selectedValues);
+      setInternalValues(values);
+    }
+  };
+
+  const handleTextChange = (text: string) => {
+    if (isControlled(props)) {
+      props.onChange([text]);
+    } else {
+      setInternalTextValue(text);
+    }
+  };
+
+  // 非受控模式的提交处理
+  const handleSubmit = () => {
+    if (!isControlled(props) && props.onSubmit) {
+      if (selector.type === 'text') {
+        props.onSubmit([internalTextValue]);
+      } else {
+        props.onSubmit(internalValues);
+      }
     }
   };
 
   const isValid = () => {
     if (!selector.required) return true;
-    if (selector.type === 'text') return textValue.trim().length > 0;
-    return selectedValues.length > 0;
+    if (selector.type === 'text') return currentTextValue.trim().length > 0;
+    return currentValues.length > 0;
   };
+  
+  // 是否显示提交按钮（非受控模式默认显示，受控模式不显示）
+  const showSubmitButton = !isControlled(props);
 
   return (
     <div className="space-y-4 p-4 bg-muted/50 rounded-lg">
@@ -47,14 +99,14 @@ export function SmartSelector({ selector, onSubmit, disabled }: SmartSelectorPro
       
       {selector.type === 'radio' && (
         <RadioGroup
-          value={selectedValues[0] || ''}
-          onValueChange={(value) => setSelectedValues([value])}
+          value={currentValues[0] || ''}
+          onValueChange={(value) => handleValuesChange([value])}
           disabled={disabled}
         >
           {selector.options.map((option) => (
             <div key={option.value} className="flex items-center space-x-2">
-              <RadioGroupItem value={option.value} id={option.value} />
-              <Label htmlFor={option.value} className="cursor-pointer">
+              <RadioGroupItem value={option.value} id={`${selector.id}-${option.value}`} />
+              <Label htmlFor={`${selector.id}-${option.value}`} className="cursor-pointer">
                 {option.label}
               </Label>
             </div>
@@ -67,18 +119,18 @@ export function SmartSelector({ selector, onSubmit, disabled }: SmartSelectorPro
           {selector.options.map((option) => (
             <div key={option.value} className="flex items-center space-x-2">
               <Checkbox
-                id={option.value}
-                checked={selectedValues.includes(option.value)}
+                id={`${selector.id}-${option.value}`}
+                checked={currentValues.includes(option.value)}
                 onCheckedChange={(checked) => {
                   if (checked) {
-                    setSelectedValues([...selectedValues, option.value]);
+                    handleValuesChange([...currentValues, option.value]);
                   } else {
-                    setSelectedValues(selectedValues.filter(v => v !== option.value));
+                    handleValuesChange(currentValues.filter(v => v !== option.value));
                   }
                 }}
                 disabled={disabled}
               />
-              <Label htmlFor={option.value} className="cursor-pointer">
+              <Label htmlFor={`${selector.id}-${option.value}`} className="cursor-pointer">
                 {option.label}
               </Label>
             </div>
@@ -88,8 +140,8 @@ export function SmartSelector({ selector, onSubmit, disabled }: SmartSelectorPro
 
       {selector.type === 'dropdown' && (
         <Select
-          value={selectedValues[0] || ''}
-          onValueChange={(value) => setSelectedValues([value])}
+          value={currentValues[0] || ''}
+          onValueChange={(value) => handleValuesChange([value])}
           disabled={disabled}
         >
           <SelectTrigger>
@@ -108,8 +160,8 @@ export function SmartSelector({ selector, onSubmit, disabled }: SmartSelectorPro
       {selector.type === 'text' && (
         <div className="space-y-2">
           <Input
-            value={textValue}
-            onChange={(e) => setTextValue(e.target.value)}
+            value={currentTextValue}
+            onChange={(e) => handleTextChange(e.target.value)}
             placeholder="请输入..."
             disabled={disabled}
           />
@@ -121,7 +173,7 @@ export function SmartSelector({ selector, onSubmit, disabled }: SmartSelectorPro
                   key={option.value}
                   variant="outline"
                   size="sm"
-                  onClick={() => setTextValue(option.label)}
+                  onClick={() => handleTextChange(option.label)}
                   disabled={disabled}
                 >
                   {option.label}
@@ -132,16 +184,27 @@ export function SmartSelector({ selector, onSubmit, disabled }: SmartSelectorPro
         </div>
       )}
 
-      <div className="flex justify-end">
-        <Button
-          onClick={handleSubmit}
-          disabled={disabled || !isValid()}
-          size="sm"
-        >
-          <Check className="mr-2 h-4 w-4" />
-          确认
-        </Button>
-      </div>
+      {/* 非受控模式显示单独提交按钮 */}
+      {showSubmitButton && (
+        <div className="flex justify-end">
+          <Button
+            onClick={handleSubmit}
+            disabled={disabled || !isValid()}
+            size="sm"
+          >
+            <Check className="mr-2 h-4 w-4" />
+            确认
+          </Button>
+        </div>
+      )}
+      
+      {/* 受控模式显示已选状态提示 */}
+      {!showSubmitButton && currentValues.length > 0 && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Check className="h-4 w-4 text-green-500" />
+          <span>已选择</span>
+        </div>
+      )}
     </div>
   );
 }

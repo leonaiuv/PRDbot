@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Settings, Send, Loader2, Sparkles } from 'lucide-react';
+import { ArrowLeft, Settings, Send, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -17,35 +17,40 @@ import { SelectorSkeleton } from '@/components/selector-skeleton';
 import { GeneratingIndicator } from '@/components/generating-indicator';
 import { GenerationStatusBar } from '@/components/generation-status-bar';
 import { useProjectStore, useSettingsStore, useChatStore } from '@/store';
-import type { ConversationMessage, SelectorData, AIQuestionsResponse, QuestionMeta } from '@/types';
+import type { ConversationMessage, SelectorData, QuestionMeta } from '@/types';
+import type { ValidatedAIResponse } from '@/lib/validator';
 
-// 解析AI响应中的选择器数据和元数据
-// 放宽正则匹配：兼容 \r\n、可选空格、大小写变体、缺少尾部换行
-function parseAIResponse(response: string): { 
-  textContent: string; 
-  selectorData: SelectorData[] | null;
-  meta: QuestionMeta | null;
+// 后端校验响应类型
+interface ValidatedChatResponse {
+  validated: boolean;
+  data?: ValidatedAIResponse;
+  textContent?: string;
+  rawContent?: string;
+  validationErrors?: string[];
+  retryCount?: number;
+}
+
+// 从校验后的数据转换为选择器数据
+function convertToSelectorData(data: ValidatedAIResponse): {
+  selectors: SelectorData[];
+  meta: QuestionMeta;
 } {
-  // 兼容多种代码块格式：```json、``` json、```JSON等
-  const jsonMatch = response.match(/```\s*json\s*\r?\n?([\s\S]*?)\r?\n?```/i);
-  if (jsonMatch) {
-    try {
-      const parsed = JSON.parse(jsonMatch[1].trim()) as AIQuestionsResponse & { meta?: QuestionMeta };
-      // 移除代码块时也使用宽松正则
-      const textContent = response.replace(/```\s*json\s*\r?\n?[\s\S]*?\r?\n?```/i, '').trim();
-      const selectors = parsed.questions?.map(q => ({
-        id: q.id,
-        type: q.type,
-        question: q.question,
-        options: q.options,
-        required: q.required
-      })) || null;
-      return { textContent, selectorData: selectors, meta: parsed.meta || null };
-    } catch (e) {
-      console.error('Failed to parse selector data:', e);
-    }
-  }
-  return { textContent: response, selectorData: null, meta: null };
+  const selectors: SelectorData[] = data.questions.map(q => ({
+    id: q.id,
+    type: q.type,
+    question: q.question,
+    options: q.options,
+    required: q.required ?? true,
+  }));
+  
+  const meta: QuestionMeta = {
+    phase: data.meta.phase,
+    progress: data.meta.progress,
+    canGeneratePRD: data.meta.canGeneratePRD,
+    suggestedNextTopic: data.meta.suggestedNextTopic,
+  };
+  
+  return { selectors, meta };
 }
 
 export default function ChatPage() {
@@ -79,6 +84,8 @@ export default function ChatPage() {
   const [mounted, setMounted] = useState(false);
   const [currentSelectors, setCurrentSelectors] = useState<SelectorData[]>([]);
   const [showStatusBar, setShowStatusBar] = useState(true);
+  // 统一管理所有选择器的选择状态: { selectorId: selectedValues[] }
+  const [selectionsMap, setSelectionsMap] = useState<Record<string, string[]>>({});
   const scrollRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const stepTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -143,7 +150,7 @@ export default function ChatPage() {
     };
   }, [generationPhase, advanceStep, updateElapsedTime]);
 
-  // 发送消息到AI（缓冲模式 - 不实时流式渲染，等待完整响应后统一渲染）
+  // 发送消息到AI（后端校验模式 - 后端聚合并校验响应，前端等待校验结果后统一渲染）
   const sendMessage = useCallback(async (content: string) => {
     if (!settings?.apiKeys[settings.defaultModel]) {
       toast.error('请先在设置中配置 API Key');
@@ -190,10 +197,10 @@ export default function ChatPage() {
       if (!reader) throw new Error('无法读取响应');
 
       const decoder = new TextDecoder();
-      let fullContent = '';
-      let sseBuffer = ''; // SSE分片缓冲，避免跨chunk的JSON被截断
+      let sseBuffer = ''; // SSE分片缓冲
+      let validatedResponse: ValidatedChatResponse | null = null;
 
-      // 缓冲模式：不实时渲染，等待完整响应
+      // 等待后端校验完成的响应
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -211,11 +218,7 @@ export default function ChatPage() {
           if (data === '[DONE]') continue;
 
           try {
-            const { content } = JSON.parse(data);
-            if (content) {
-              fullContent += content;
-              // 不再实时渲染，只累积内容
-            }
+            validatedResponse = JSON.parse(data) as ValidatedChatResponse;
           } catch (e) {
             console.warn('SSE JSON parse warning:', e, 'data:', data);
           }
@@ -227,37 +230,75 @@ export default function ChatPage() {
         const data = sseBuffer.slice(6);
         if (data !== '[DONE]') {
           try {
-            const { content } = JSON.parse(data);
-            if (content) {
-              fullContent += content;
-            }
+            validatedResponse = JSON.parse(data) as ValidatedChatResponse;
           } catch (e) {
             console.warn('SSE final buffer parse warning:', e);
           }
         }
       }
 
-      // 解析完整的AI响应
-      const { textContent, selectorData, meta } = parseAIResponse(fullContent);
-
-      // 添加AI消息
-      const aiMessage: ConversationMessage = {
-        id: uuidv4(),
-        role: 'assistant',
-        timestamp: Date.now(),
-        content: textContent,
-        selectors: selectorData || undefined
-      };
-      await addMessage(aiMessage);
-
-      // 设置待渲染的选择器（用于统一渲染）
-      if (selectorData && selectorData.length > 0) {
-        setPendingSelectors(selectorData, meta || undefined);
-        setCurrentSelectors(selectorData);
+      // 处理后端校验结果
+      if (!validatedResponse) {
+        throw new Error('AI 响应解析失败');
       }
 
-      // 完成生成，进入可交互状态
-      completeGeneration();
+      if (validatedResponse.validated && validatedResponse.data) {
+        // 校验通过，使用结构化数据
+        const { selectors, meta } = convertToSelectorData(validatedResponse.data);
+        
+        // 如果有重试，显示提示
+        if (validatedResponse.retryCount && validatedResponse.retryCount > 0) {
+          toast.info(`AI 已自动纠正输出格式 (重试 ${validatedResponse.retryCount} 次)`);
+        }
+
+        // 添加AI消息
+        const aiMessage: ConversationMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          timestamp: Date.now(),
+          content: validatedResponse.textContent || '',
+          selectors: selectors
+        };
+        await addMessage(aiMessage);
+
+        // 设置待渲染的选择器
+        if (selectors.length > 0) {
+          setPendingSelectors(selectors, meta);
+          setCurrentSelectors(selectors);
+          // 初始化所有选择器的状态为空数组
+          const initialMap: Record<string, string[]> = {};
+          selectors.forEach(s => {
+            initialMap[s.id] = [];
+          });
+          setSelectionsMap(initialMap);
+        }
+
+        // 完成生成，进入可交互状态
+        completeGeneration();
+
+      } else {
+        // 校验失败，显示错误信息和原始内容
+        const errorMsg = validatedResponse.validationErrors?.join('; ') || 'AI 输出格式异常';
+        console.error('Chat validation failed:', {
+          errors: validatedResponse.validationErrors,
+          rawContent: validatedResponse.rawContent?.substring(0, 200),
+          retryCount: validatedResponse.retryCount
+        });
+        
+        toast.error(`AI 输出格式异常，已重试 ${validatedResponse.retryCount || 0} 次`);
+
+        // 将原始内容作为文本消息显示
+        const aiMessage: ConversationMessage = {
+          id: uuidv4(),
+          role: 'assistant',
+          timestamp: Date.now(),
+          content: validatedResponse.rawContent || '无法解析AI响应'
+        };
+        await addMessage(aiMessage);
+
+        // 设置错误状态
+        setGenerationError(errorMsg);
+      }
 
     } catch (error) {
       console.error('Chat error:', error);
@@ -267,7 +308,68 @@ export default function ChatPage() {
     }
   }, [currentProject, settings, addMessage, startGeneration, setPendingSelectors, completeGeneration, setGenerationError]);
 
-  // 处理选择器提交
+  // 处理单个选择器的值变更（受控模式）
+  const handleSelectorChange = useCallback((selectorId: string, values: string[]) => {
+    setSelectionsMap(prev => ({
+      ...prev,
+      [selectorId]: values
+    }));
+  }, []);
+
+  // 检查是否所有必填项都已填写
+  const allRequiredFilled = useMemo(() => {
+    return currentSelectors.every(selector => {
+      if (!selector.required) return true;
+      const values = selectionsMap[selector.id] || [];
+      if (selector.type === 'text') {
+        return values.length > 0 && values[0].trim().length > 0;
+      }
+      return values.length > 0;
+    });
+  }, [currentSelectors, selectionsMap]);
+
+  // 检查是否有任何选择
+  const hasAnySelection = useMemo(() => {
+    return Object.values(selectionsMap).some(values => values.length > 0);
+  }, [selectionsMap]);
+
+  // 统一提交所有选择器的答案
+  const handleSubmitAll = useCallback(async () => {
+    if (currentSelectors.length === 0) return;
+    
+    // 构建统一的提交内容
+    const contentParts: string[] = [];
+    
+    for (const selector of currentSelectors) {
+      const values = selectionsMap[selector.id] || [];
+      if (values.length === 0) continue;
+      
+      // 获取选中的标签
+      let labels: string[];
+      if (selector.type === 'text') {
+        labels = values;
+      } else {
+        labels = values.map(v => {
+          const option = selector.options.find(o => o.value === v);
+          return option?.label || v;
+        });
+      }
+      
+      contentParts.push(`${selector.question}\n我的选择：${labels.join('、')}`);
+    }
+    
+    if (contentParts.length === 0) return;
+    
+    // 清空当前选择器和选择状态
+    setCurrentSelectors([]);
+    setSelectionsMap({});
+    resetGeneration();
+    
+    // 发送合并后的用户选择作为消息
+    await sendMessage(contentParts.join('\n\n'));
+  }, [currentSelectors, selectionsMap, sendMessage, resetGeneration]);
+
+  // 处理选择器提交（兼容旧的单个提交模式 - 仅用于单个选择器场景）
   const handleSelectorSubmit = async (selectorId: string, values: string[]) => {
     const selector = currentSelectors.find(s => s.id === selectorId);
     if (!selector) return;
@@ -394,30 +496,39 @@ export default function ChatPage() {
       {/* 对话区域 */}
       <ScrollArea className="flex-1 p-4" ref={scrollRef}>
         <div className="container max-w-3xl space-y-4">
-          {currentProject.conversation.map((message) => (
-            <div
-              key={message.id}
-              className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-            >
+          {currentProject.conversation.map((message) => {
+            // AI消息如果内容为空且有选择器数据，则不显示空气泡
+            const isEmptyAIMessage = message.role === 'assistant' && 
+              (!message.content || message.content.trim() === '') && 
+              message.selectors && message.selectors.length > 0;
+            
+            if (isEmptyAIMessage) return null;
+            
+            return (
               <div
-                className={`max-w-[85%] rounded-lg p-4 ${
-                  message.role === 'user'
-                    ? 'bg-primary text-primary-foreground'
-                    : 'bg-muted'
-                }`}
+                key={message.id}
+                className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                {message.role === 'assistant' ? (
-                  <div className="prose prose-sm dark:prose-invert max-w-none">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                      {message.content}
-                    </ReactMarkdown>
-                  </div>
-                ) : (
-                  <p className="whitespace-pre-wrap">{message.content}</p>
-                )}
+                <div
+                  className={`max-w-[85%] rounded-lg p-4 ${
+                    message.role === 'user'
+                      ? 'bg-primary text-primary-foreground'
+                      : 'bg-muted'
+                  }`}
+                >
+                  {message.role === 'assistant' ? (
+                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                        {message.content}
+                      </ReactMarkdown>
+                    </div>
+                  ) : (
+                    <p className="whitespace-pre-wrap">{message.content}</p>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {/* 生成中状态 - 显示进度指示器和骨架屏 */}
           {generationPhase === 'generating' && (
@@ -448,17 +559,42 @@ export default function ChatPage() {
             />
           )}
 
-          {/* 当前选择器 - 统一渲染 */}
+          {/* 当前选择器 - 受控模式统一渲染 */}
           {generationPhase === 'interactive' && currentSelectors.length > 0 && (
             <div className="space-y-4">
               {currentSelectors.map((selector) => (
                 <SmartSelector
                   key={selector.id}
                   selector={selector}
-                  onSubmit={(values) => handleSelectorSubmit(selector.id, values)}
+                  value={selectionsMap[selector.id] || []}
+                  onChange={(values) => handleSelectorChange(selector.id, values)}
                   disabled={isStreaming}
                 />
               ))}
+              
+              {/* 统一提交按钮 */}
+              <div className="flex justify-end pt-2">
+                <Button
+                  onClick={handleSubmitAll}
+                  disabled={isStreaming || !hasAnySelection}
+                  className="min-w-[120px]"
+                >
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                  提交全部答案
+                  {currentSelectors.length > 1 && (
+                    <span className="ml-1 text-xs opacity-75">
+                      ({Object.values(selectionsMap).filter(v => v.length > 0).length}/{currentSelectors.length})
+                    </span>
+                  )}
+                </Button>
+              </div>
+              
+              {/* 必填项提示 */}
+              {!allRequiredFilled && hasAnySelection && (
+                <p className="text-sm text-amber-600 dark:text-amber-400 text-center">
+                  还有必填项未完成，请继续填写
+                </p>
+              )}
             </div>
           )}
 
