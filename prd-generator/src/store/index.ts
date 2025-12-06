@@ -745,6 +745,13 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
 
   // 恢复中断的任务（从持久化恢复到内存）
   restoreTask: async (projectId: string) => {
+    // P3: 修复竞态条件 - 如果内存中已有活跃的生成任务，不要覆盖
+    const existingTask = get().tasks[projectId];
+    if (existingTask?.phase === 'generating' && existingTask.abortController) {
+      // 当前正在正常生成，不需要恢复
+      return false;
+    }
+    
     const persisted = await prdTasksDB.get(projectId);
     if (!persisted) return false;
     
