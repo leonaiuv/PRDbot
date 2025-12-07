@@ -10,6 +10,8 @@ import type {
   TranslationTaskPersisted,
   TranslationCache,
   LanguageConfig,
+  AnalysisResult,
+  AnalysisType,
 } from '@/types'
 
 export function generateTestId(): string {
@@ -202,3 +204,25 @@ export const TEST_LANGUAGES: LanguageConfig[] = [
   { code: 'ja', name: '日语', flag: '🇯🇵', nativeName: '日本語' },
   { code: 'ko', name: '韩语', flag: '🇰🇷', nativeName: '한국어' },
 ]
+
+// ========== AI分析结果测试工厂函数 ==========
+
+export function createTestAnalysisResult(
+  projectId: string,
+  type: AnalysisType = 'optimize',
+  overrides?: Partial<AnalysisResult>
+): AnalysisResult {
+  const now = Date.now()
+  return {
+    id: `${projectId}_${type}`,
+    projectId,
+    type,
+    content: `# ${type === 'optimize' ? 'AI优化建议' : type === 'score' ? '质量评分' : type === 'competitor' ? '竞品分析' : '图表生成'}\n\n这是测试内容。`,
+    prdContentHash: `hash_${now}`,
+    createdAt: now,
+    updatedAt: now,
+    ...overrides,
+  }
+}
+
+export const TEST_ANALYSIS_TYPES: AnalysisType[] = ['optimize', 'score', 'competitor', 'diagram']

@@ -19,6 +19,10 @@ export async function clearTestDatabase() {
   if (db.translationCache) {
     await db.translationCache.clear()
   }
+  // 清理AI分析结果表
+  if (db.analysisResults) {
+    await db.analysisResults.clear()
+  }
 }
 
 /**

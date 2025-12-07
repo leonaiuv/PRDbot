@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Project, Settings, ChatDraft, PRDGenerationTaskPersisted, PRDVersion, TranslationTaskPersisted, TranslationCache } from '@/types';
+import type { Project, Settings, ChatDraft, PRDGenerationTaskPersisted, PRDVersion, TranslationTaskPersisted, TranslationCache, AnalysisResult } from '@/types';
 import { encryptApiKeys, decryptApiKeys, isEncrypted } from './crypto';
 
 // 定义数据库类
@@ -11,6 +11,7 @@ class PRDDatabase extends Dexie {
   prdVersions!: EntityTable<PRDVersion, 'id'>;
   translationTasks!: EntityTable<TranslationTaskPersisted, 'id'>;
   translationCache!: EntityTable<TranslationCache, 'id'>;
+  analysisResults!: EntityTable<AnalysisResult, 'id'>;
 
   constructor() {
     super('PRDGeneratorDB');
@@ -47,6 +48,18 @@ class PRDDatabase extends Dexie {
       prdVersions: 'id, projectId, createdAt',
       translationTasks: 'id, projectId, langCode, phase, updatedAt',
       translationCache: 'id, projectId, langCode, contentHash, updatedAt'
+    });
+
+    // 版本5: 添加AI分析结果表
+    this.version(5).stores({
+      projects: 'id, name, createdAt, updatedAt, status',
+      settings: 'id',
+      chatDrafts: 'projectId, updatedAt',
+      prdTasks: 'projectId, phase, updatedAt',
+      prdVersions: 'id, projectId, createdAt',
+      translationTasks: 'id, projectId, langCode, phase, updatedAt',
+      translationCache: 'id, projectId, langCode, contentHash, updatedAt',
+      analysisResults: 'id, projectId, type, updatedAt'
     });
   }
 }
@@ -384,3 +397,51 @@ export const translationCacheDB = {
 };
 
 export default db;
+
+// ========== AI分析结果操作函数 ==========
+export const analysisResultsDB = {
+  // 获取指定分析结果
+  async get(projectId: string, type: string): Promise<AnalysisResult | undefined> {
+    const id = `${projectId}_${type}`;
+    return await db.analysisResults.get(id);
+  },
+
+  // 获取项目的所有分析结果
+  async getByProject(projectId: string): Promise<AnalysisResult[]> {
+    return await db.analysisResults.where('projectId').equals(projectId).toArray();
+  },
+
+  // 保存或更新分析结果
+  async save(result: Omit<AnalysisResult, 'createdAt' | 'updatedAt'> & { createdAt?: number }): Promise<string> {
+    const now = Date.now();
+    const resultWithTime: AnalysisResult = {
+      ...result,
+      createdAt: result.createdAt || now,
+      updatedAt: now
+    };
+    await db.analysisResults.put(resultWithTime);
+    return result.id;
+  },
+
+  // 删除分析结果
+  async delete(id: string): Promise<void> {
+    return await db.analysisResults.delete(id);
+  },
+
+  // 删除项目的所有分析结果
+  async deleteByProject(projectId: string): Promise<number> {
+    return await db.analysisResults.where('projectId').equals(projectId).delete();
+  },
+
+  // 清理过期分析结果（30天前）
+  async cleanupOld(): Promise<number> {
+    const cutoff = Date.now() - 30 * 24 * 60 * 60 * 1000;
+    const oldResults = await db.analysisResults
+      .where('updatedAt')
+      .below(cutoff)
+      .toArray();
+    
+    const ids = oldResults.map(r => r.id);
+    return await db.analysisResults.bulkDelete(ids).then(() => ids.length);
+  }
+};

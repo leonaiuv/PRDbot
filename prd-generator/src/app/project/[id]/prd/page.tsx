@@ -667,6 +667,7 @@ ${currentProject.prdContent}
               {/* AI分析工具 */}
               {currentProject.prdContent && settings && (
                 <AIAnalysisTools
+                  projectId={projectId}
                   prdContent={currentProject.prdContent}
                   model={settings.defaultModel}
                   apiKey={settings.apiKeys[settings.defaultModel] || ''}

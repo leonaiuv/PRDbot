@@ -325,3 +325,19 @@ export interface TranslationCache {
   createdAt: number;
   updatedAt: number;
 }
+
+// ========== AI分析结果持久化 ==========
+
+// AI分析类型
+export type AnalysisType = 'optimize' | 'score' | 'competitor' | 'diagram';
+
+// AI分析结果记录
+export interface AnalysisResult {
+  id: string;              // 唯一ID: projectId_type
+  projectId: string;
+  type: AnalysisType;
+  content: string;         // 分析结果内容
+  prdContentHash: string;  // 生成时PRD内容的hash值
+  createdAt: number;
+  updatedAt: number;
+}

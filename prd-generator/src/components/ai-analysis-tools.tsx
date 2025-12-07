@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { 
   Sparkles, 
   Loader2, 
@@ -8,12 +8,18 @@ import {
   Lightbulb,
   Award,
   Users,
-  Network
+  Network,
+  RefreshCw,
+  Eye,
+  Clock,
+  CheckCircle2
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { MermaidRenderer } from './mermaid-renderer';
 import { toast } from 'sonner';
+import { analysisResultsDB } from '@/lib/db';
+import type { AnalysisResult, AnalysisType } from '@/types';
 
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
@@ -29,17 +35,55 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-
-type AnalysisType = 'optimize' | 'score' | 'competitor' | 'diagram';
+import { Badge } from '@/components/ui/badge';
 
 interface AIAnalysisToolsProps {
+  projectId: string;
   prdContent: string;
   model: string;
   apiKey: string;
   customApiUrl?: string;
   customModelName?: string;
+}
+
+// 简单的hash函数用于比较PRD内容是否变化
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash;
+  }
+  return hash.toString(36);
+}
+
+// 格式化时间
+function formatTime(timestamp: number): string {
+  const date = new Date(timestamp);
+  const now = new Date();
+  const diff = now.getTime() - timestamp;
+  
+  if (diff < 60 * 1000) {
+    return '刚刚';
+  } else if (diff < 60 * 60 * 1000) {
+    return `${Math.floor(diff / (60 * 1000))}分钟前`;
+  } else if (diff < 24 * 60 * 60 * 1000) {
+    return `${Math.floor(diff / (60 * 60 * 1000))}小时前`;
+  } else if (date.toDateString() === now.toDateString()) {
+    return `今天 ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  } else {
+    return `${date.getMonth() + 1}/${date.getDate()} ${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+  }
+}
+
+// 分析结果状态
+interface AnalysisState {
+  content: string;
+  updatedAt: number | null;
+  isOutdated: boolean;  // PRD内容已变化
 }
 
 const ANALYSIS_OPTIONS = [
@@ -70,6 +114,7 @@ const ANALYSIS_OPTIONS = [
 ];
 
 export function AIAnalysisTools({ 
+  projectId,
   prdContent, 
   model, 
   apiKey, 
@@ -78,11 +123,11 @@ export function AIAnalysisTools({
 }: AIAnalysisToolsProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<AnalysisType>('optimize');
-  const [results, setResults] = useState<Record<AnalysisType, string>>({
-    optimize: '',
-    score: '',
-    competitor: '',
-    diagram: '',
+  const [results, setResults] = useState<Record<AnalysisType, AnalysisState>>({
+    optimize: { content: '', updatedAt: null, isOutdated: false },
+    score: { content: '', updatedAt: null, isOutdated: false },
+    competitor: { content: '', updatedAt: null, isOutdated: false },
+    diagram: { content: '', updatedAt: null, isOutdated: false },
   });
   const [loading, setLoading] = useState<Record<AnalysisType, boolean>>({
     optimize: false,
@@ -91,6 +136,36 @@ export function AIAnalysisTools({
     diagram: false,
   });
 
+  // 计算当前PRD内容的hash
+  const currentPrdHash = simpleHash(prdContent);
+
+  // 加载已保存的分析结果
+  const loadSavedResults = useCallback(async () => {
+    try {
+      const savedResults = await analysisResultsDB.getByProject(projectId);
+      if (savedResults.length > 0) {
+        const newResults = { ...results };
+        savedResults.forEach((result: AnalysisResult) => {
+          const type = result.type as AnalysisType;
+          newResults[type] = {
+            content: result.content,
+            updatedAt: result.updatedAt,
+            isOutdated: result.prdContentHash !== currentPrdHash,
+          };
+        });
+        setResults(newResults);
+      }
+    } catch (error) {
+      console.error('Failed to load saved analysis results:', error);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId, currentPrdHash]);
+
+  useEffect(() => {
+    loadSavedResults();
+  }, [loadSavedResults]);
+
+  // 执行分析并保存结果
   const handleAnalyze = async (type: AnalysisType) => {
     if (!prdContent.trim()) {
       toast.error('没有PRD内容可分析');
@@ -126,11 +201,30 @@ export function AIAnalysisTools({
       }
 
       const data = await response.json();
-      setResults(prev => ({ ...prev, [type]: data.content }));
+      const now = Date.now();
+      
+      // 保存到数据库
+      await analysisResultsDB.save({
+        id: `${projectId}_${type}`,
+        projectId,
+        type,
+        content: data.content,
+        prdContentHash: currentPrdHash,
+      });
+
+      setResults(prev => ({ 
+        ...prev, 
+        [type]: { 
+          content: data.content, 
+          updatedAt: now,
+          isOutdated: false 
+        } 
+      }));
+      
+      toast.success('分析完成并已保存');
     } catch (error) {
       console.error('Analysis error:', error);
       
-      // 尝试解析结构化错误响应
       if (error instanceof Error) {
         let errorMessage = error.message;
         let suggestion: string | undefined;
@@ -157,7 +251,16 @@ export function AIAnalysisTools({
     }
   };
 
+  // 查看已有结果
+  const handleViewResult = (type: AnalysisType) => {
+    setActiveTab(type);
+    setIsOpen(true);
+  };
+
   const hasContent = prdContent.trim().length > 0;
+  
+  // 计算已有结果数量
+  const savedCount = Object.values(results).filter(r => r.content).length;
 
   return (
     <>
@@ -171,29 +274,84 @@ export function AIAnalysisTools({
           >
             <Sparkles className="h-4 w-4" />
             AI 分析
+            {savedCount > 0 && (
+              <Badge variant="secondary" className="ml-1 h-5 px-1.5 text-xs">
+                {savedCount}
+              </Badge>
+            )}
             <ChevronDown className="h-3 w-3" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="w-56">
-          {ANALYSIS_OPTIONS.map((option) => (
-            <DropdownMenuItem
-              key={option.type}
-              onClick={() => handleAnalyze(option.type)}
-              disabled={loading[option.type]}
-              className="flex items-start gap-3 py-2"
-            >
-              <option.icon className="h-4 w-4 mt-0.5" />
-              <div className="flex-1">
-                <div className="font-medium">{option.label}</div>
-                <div className="text-xs text-muted-foreground">
-                  {option.description}
-                </div>
+        <DropdownMenuContent align="end" className="w-72">
+          {/* 查看已有结果 */}
+          {savedCount > 0 && (
+            <>
+              <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                已保存的分析结果
               </div>
-              {loading[option.type] && (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              )}
-            </DropdownMenuItem>
-          ))}
+              {ANALYSIS_OPTIONS.filter(opt => results[opt.type].content).map((option) => {
+                const result = results[option.type];
+                return (
+                  <DropdownMenuItem
+                    key={`view-${option.type}`}
+                    onClick={() => handleViewResult(option.type)}
+                    className="flex items-start gap-3 py-2"
+                  >
+                    <Eye className="h-4 w-4 mt-0.5 text-primary" />
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium">{option.label}</span>
+                        {result.isOutdated && (
+                          <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">
+                            已过期
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                        <Clock className="h-3 w-3" />
+                        {result.updatedAt ? formatTime(result.updatedAt) : '未知'}
+                      </div>
+                    </div>
+                    <CheckCircle2 className="h-4 w-4 text-green-500" />
+                  </DropdownMenuItem>
+                );
+              })}
+              <DropdownMenuSeparator />
+            </>
+          )}
+          
+          {/* 生成新分析 */}
+          <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+            {savedCount > 0 ? '重新生成' : '生成分析'}
+          </div>
+          {ANALYSIS_OPTIONS.map((option) => {
+            const hasResult = results[option.type].content;
+            return (
+              <DropdownMenuItem
+                key={option.type}
+                onClick={() => handleAnalyze(option.type)}
+                disabled={loading[option.type]}
+                className="flex items-start gap-3 py-2"
+              >
+                {hasResult ? (
+                  <RefreshCw className="h-4 w-4 mt-0.5" />
+                ) : (
+                  <option.icon className="h-4 w-4 mt-0.5" />
+                )}
+                <div className="flex-1">
+                  <div className="font-medium">
+                    {hasResult ? `重新生成${option.label}` : option.label}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {option.description}
+                  </div>
+                </div>
+                {loading[option.type] && (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                )}
+              </DropdownMenuItem>
+            );
+          })}
         </DropdownMenuContent>
       </DropdownMenu>
 
@@ -205,63 +363,99 @@ export function AIAnalysisTools({
               AI 分析结果
             </SheetTitle>
             <SheetDescription>
-              基于PRD内容的智能分析
+              基于PRD内容的智能分析（结果已自动保存）
             </SheetDescription>
           </SheetHeader>
 
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as AnalysisType)} className="mt-4">
             <TabsList className="grid grid-cols-4 w-full">
-              {ANALYSIS_OPTIONS.map((option) => (
-                <TabsTrigger 
-                  key={option.type} 
-                  value={option.type}
-                  className="gap-1.5 text-xs sm:text-sm"
-                >
-                  <option.icon className="h-3.5 w-3.5" />
-                  <span className="hidden sm:inline">{option.label}</span>
-                </TabsTrigger>
-              ))}
+              {ANALYSIS_OPTIONS.map((option) => {
+                const hasResult = results[option.type].content;
+                const isOutdated = results[option.type].isOutdated;
+                return (
+                  <TabsTrigger 
+                    key={option.type} 
+                    value={option.type}
+                    className="gap-1.5 text-xs sm:text-sm relative"
+                  >
+                    <option.icon className="h-3.5 w-3.5" />
+                    <span className="hidden sm:inline">{option.label}</span>
+                    {hasResult && (
+                      <span className={`absolute -top-1 -right-1 h-2 w-2 rounded-full ${isOutdated ? 'bg-amber-500' : 'bg-green-500'}`} />
+                    )}
+                  </TabsTrigger>
+                );
+              })}
             </TabsList>
 
-            {ANALYSIS_OPTIONS.map((option) => (
-              <TabsContent 
-                key={option.type} 
-                value={option.type}
-                className="mt-4"
-              >
-                {loading[option.type] ? (
-                  <div className="flex flex-col items-center justify-center py-12">
-                    <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
-                    <p className="text-sm text-muted-foreground">
-                      正在分析中，请稍候...
-                    </p>
-                  </div>
-                ) : results[option.type] ? (
-                  <ScrollArea className="h-[calc(100vh-250px)]">
-                    <div className="prose prose-sm dark:prose-invert max-w-none pr-4">
-                      {option.type === 'diagram' ? (
-                        <MermaidRenderer content={results[option.type]} />
-                      ) : (
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {results[option.type]}
-                        </ReactMarkdown>
-                      )}
+            {ANALYSIS_OPTIONS.map((option) => {
+              const result = results[option.type];
+              return (
+                <TabsContent 
+                  key={option.type} 
+                  value={option.type}
+                  className="mt-4"
+                >
+                  {loading[option.type] ? (
+                    <div className="flex flex-col items-center justify-center py-12">
+                      <Loader2 className="h-8 w-8 animate-spin text-primary mb-4" />
+                      <p className="text-sm text-muted-foreground">
+                        正在分析中，请稍候...
+                      </p>
                     </div>
-                  </ScrollArea>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <option.icon className="h-12 w-12 text-muted-foreground/50 mb-4" />
-                    <p className="text-muted-foreground mb-4">
-                      {option.description}
-                    </p>
-                    <Button onClick={() => handleAnalyze(option.type)}>
-                      <Sparkles className="mr-2 h-4 w-4" />
-                      开始分析
-                    </Button>
-                  </div>
-                )}
-              </TabsContent>
-            ))}
+                  ) : result.content ? (
+                    <div className="space-y-3">
+                      {/* 状态栏 */}
+                      <div className="flex items-center justify-between text-xs text-muted-foreground pb-2 border-b">
+                        <div className="flex items-center gap-2">
+                          <Clock className="h-3.5 w-3.5" />
+                          <span>生成于 {result.updatedAt ? formatTime(result.updatedAt) : '未知'}</span>
+                          {result.isOutdated && (
+                            <Badge variant="outline" className="text-amber-600 border-amber-300">
+                              PRD已更新，建议重新生成
+                            </Badge>
+                          )}
+                        </div>
+                        <Button 
+                          variant="ghost" 
+                          size="sm" 
+                          className="h-7 text-xs gap-1"
+                          onClick={() => handleAnalyze(option.type)}
+                          disabled={loading[option.type]}
+                        >
+                          <RefreshCw className="h-3 w-3" />
+                          重新生成
+                        </Button>
+                      </div>
+                      
+                      {/* 内容 */}
+                      <ScrollArea className="h-[calc(100vh-300px)]">
+                        <div className="prose prose-sm dark:prose-invert max-w-none pr-4">
+                          {option.type === 'diagram' ? (
+                            <MermaidRenderer content={result.content} />
+                          ) : (
+                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                              {result.content}
+                            </ReactMarkdown>
+                          )}
+                        </div>
+                      </ScrollArea>
+                    </div>
+                  ) : (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <option.icon className="h-12 w-12 text-muted-foreground/50 mb-4" />
+                      <p className="text-muted-foreground mb-4">
+                        {option.description}
+                      </p>
+                      <Button onClick={() => handleAnalyze(option.type)} disabled={loading[option.type]}>
+                        <Sparkles className="mr-2 h-4 w-4" />
+                        开始分析
+                      </Button>
+                    </div>
+                  )}
+                </TabsContent>
+              );
+            })}
           </Tabs>
         </SheetContent>
       </Sheet>

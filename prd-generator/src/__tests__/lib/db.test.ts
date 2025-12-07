@@ -4,8 +4,8 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals'
-import db, { projectsDB, settingsDB, chatDraftsDB, prdTasksDB, translationTasksDB, translationCacheDB } from '@/lib/db'
-import { createTestProject, createTestChatDraft, createTestPRDTask, createTestTranslationTask, createTestTranslationCache } from '../utils/factories'
+import db, { projectsDB, settingsDB, chatDraftsDB, prdTasksDB, translationTasksDB, translationCacheDB, analysisResultsDB } from '@/lib/db'
+import { createTestProject, createTestChatDraft, createTestPRDTask, createTestTranslationTask, createTestTranslationCache, createTestAnalysisResult, TEST_ANALYSIS_TYPES } from '../utils/factories'
 import { clearTestDatabase, isValidTimestamp } from '../utils/helpers'
 
 describe('db.ts - 数据持久化层', () => {
@@ -612,6 +612,215 @@ describe('db.ts - 数据持久化层', () => {
         // 内容变化后，不应该命中旧缓存
         const miss = await translationCacheDB.getByHashAndLang('hash2', 'en')
         expect(miss).toBeUndefined()
+      })
+    })
+  })
+
+  // ========== AI分析结果测试 ==========
+  describe('analysisResultsDB', () => {
+    const projectId = 'test-project-analysis'
+
+    describe('基本 CRUD 操作', () => {
+      it('应该保存和获取分析结果', async () => {
+        const result = createTestAnalysisResult(projectId, 'optimize')
+        await analysisResultsDB.save(result)
+
+        const retrieved = await analysisResultsDB.get(projectId, 'optimize')
+
+        expect(retrieved).toBeDefined()
+        expect(retrieved!.id).toBe(`${projectId}_optimize`)
+        expect(retrieved!.type).toBe('optimize')
+        expect(retrieved!.content).toContain('AI优化建议')
+      })
+
+      it('应该更新已存在的分析结果', async () => {
+        const result = createTestAnalysisResult(projectId, 'score', {
+          content: '旧内容',
+        })
+        await analysisResultsDB.save(result)
+
+        const originalUpdatedAt = result.updatedAt
+        await new Promise(resolve => setTimeout(resolve, 10))
+
+        await analysisResultsDB.save({
+          ...result,
+          content: '新内容',
+        })
+
+        const updated = await analysisResultsDB.get(projectId, 'score')
+        expect(updated!.content).toBe('新内容')
+        expect(updated!.updatedAt).toBeGreaterThan(originalUpdatedAt)
+      })
+
+      it('应该删除分析结果', async () => {
+        const result = createTestAnalysisResult(projectId, 'competitor')
+        await analysisResultsDB.save(result)
+
+        await analysisResultsDB.delete(result.id)
+
+        const deleted = await analysisResultsDB.get(projectId, 'competitor')
+        expect(deleted).toBeUndefined()
+      })
+
+      it('删除不存在的结果不应该报错', async () => {
+        await expect(analysisResultsDB.delete('non-existent-id')).resolves.not.toThrow()
+      })
+    })
+
+    describe('项目级别操作', () => {
+      it('应该获取项目的所有分析结果', async () => {
+        // 保存多种类型的分析结果
+        for (const type of TEST_ANALYSIS_TYPES) {
+          await analysisResultsDB.save(createTestAnalysisResult(projectId, type))
+        }
+
+        const results = await analysisResultsDB.getByProject(projectId)
+
+        expect(results).toHaveLength(4)
+        expect(results.map(r => r.type).sort()).toEqual(['competitor', 'diagram', 'optimize', 'score'])
+      })
+
+      it('应该删除项目的所有分析结果', async () => {
+        for (const type of TEST_ANALYSIS_TYPES) {
+          await analysisResultsDB.save(createTestAnalysisResult(projectId, type))
+        }
+
+        const deletedCount = await analysisResultsDB.deleteByProject(projectId)
+
+        expect(deletedCount).toBe(4)
+
+        const remaining = await analysisResultsDB.getByProject(projectId)
+        expect(remaining).toHaveLength(0)
+      })
+
+      it('不同项目的分析结果应该独立', async () => {
+        const project1 = 'project-1'
+        const project2 = 'project-2'
+
+        await analysisResultsDB.save(createTestAnalysisResult(project1, 'optimize'))
+        await analysisResultsDB.save(createTestAnalysisResult(project2, 'optimize'))
+
+        const results1 = await analysisResultsDB.getByProject(project1)
+        const results2 = await analysisResultsDB.getByProject(project2)
+
+        expect(results1).toHaveLength(1)
+        expect(results2).toHaveLength(1)
+        expect(results1[0].projectId).toBe(project1)
+        expect(results2[0].projectId).toBe(project2)
+      })
+    })
+
+    describe('过期清理', () => {
+      it('应该清理30天前的分析结果', async () => {
+        const oldTime = Date.now() - 31 * 24 * 60 * 60 * 1000 // 31天前
+        const newTime = Date.now() - 1 * 24 * 60 * 60 * 1000  // 1天前
+
+        // 直接操作数据库插入过期数据
+        await db.analysisResults.put({
+          ...createTestAnalysisResult(projectId, 'optimize'),
+          id: 'old-result',
+          updatedAt: oldTime,
+          createdAt: oldTime,
+        })
+        await db.analysisResults.put({
+          ...createTestAnalysisResult(projectId, 'score'),
+          id: 'new-result',
+          updatedAt: newTime,
+          createdAt: newTime,
+        })
+
+        const deleted = await analysisResultsDB.cleanupOld()
+
+        expect(deleted).toBe(1)
+
+        const remainingOld = await db.analysisResults.get('old-result')
+        const remainingNew = await db.analysisResults.get('new-result')
+
+        expect(remainingOld).toBeUndefined()
+        expect(remainingNew).toBeDefined()
+      })
+
+      it('没有过期数据时应该返回0', async () => {
+        await analysisResultsDB.save(createTestAnalysisResult(projectId, 'optimize'))
+
+        const deleted = await analysisResultsDB.cleanupOld()
+
+        expect(deleted).toBe(0)
+      })
+    })
+
+    describe('PRD内容Hash管理', () => {
+      it('应该保存PRD内容Hash', async () => {
+        const result = createTestAnalysisResult(projectId, 'optimize', {
+          prdContentHash: 'custom-hash-123',
+        })
+        await analysisResultsDB.save(result)
+
+        const retrieved = await analysisResultsDB.get(projectId, 'optimize')
+        expect(retrieved!.prdContentHash).toBe('custom-hash-123')
+      })
+
+      it('更新时应该更新Hash', async () => {
+        const result = createTestAnalysisResult(projectId, 'score', {
+          prdContentHash: 'old-hash',
+        })
+        await analysisResultsDB.save(result)
+
+        await analysisResultsDB.save({
+          ...result,
+          prdContentHash: 'new-hash',
+        })
+
+        const updated = await analysisResultsDB.get(projectId, 'score')
+        expect(updated!.prdContentHash).toBe('new-hash')
+      })
+    })
+
+    describe('边界场景', () => {
+      it('空项目应该返回空数组', async () => {
+        const results = await analysisResultsDB.getByProject('non-existent-project')
+        expect(results).toEqual([])
+      })
+
+      it('不存在的分析类型应该返回undefined', async () => {
+        await analysisResultsDB.save(createTestAnalysisResult(projectId, 'optimize'))
+
+        const result = await analysisResultsDB.get(projectId, 'score')
+        expect(result).toBeUndefined()
+      })
+
+      it('应该支持大量内容存储', async () => {
+        const largeContent = '测试内容'.repeat(10000) // 约4万字符
+        const result = createTestAnalysisResult(projectId, 'optimize', {
+          content: largeContent,
+        })
+        await analysisResultsDB.save(result)
+
+        const retrieved = await analysisResultsDB.get(projectId, 'optimize')
+        expect(retrieved!.content).toBe(largeContent)
+        expect(retrieved!.content.length).toBe(40000)
+      })
+
+      it('应该支持特殊字符', async () => {
+        const specialContent = '# 标题\n- 列表\n```mermaid\ngraph TD\n```\n中文内容 & <script>'
+        const result = createTestAnalysisResult(projectId, 'diagram', {
+          content: specialContent,
+        })
+        await analysisResultsDB.save(result)
+
+        const retrieved = await analysisResultsDB.get(projectId, 'diagram')
+        expect(retrieved!.content).toBe(specialContent)
+      })
+
+      it('并发保存应该正确处理', async () => {
+        const saves = TEST_ANALYSIS_TYPES.map(type =>
+          analysisResultsDB.save(createTestAnalysisResult(projectId, type))
+        )
+
+        await Promise.all(saves)
+
+        const results = await analysisResultsDB.getByProject(projectId)
+        expect(results).toHaveLength(4)
       })
     })
   })
