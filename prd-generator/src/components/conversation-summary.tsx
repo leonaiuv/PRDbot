@@ -6,7 +6,6 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import type { ConversationMessage } from '@/types';
 
 interface ConversationSummaryProps {
@@ -49,10 +48,10 @@ export function ConversationSummary({ conversation, className }: ConversationSum
   }
 
   return (
-    <Card className={className}>
+    <Card className={`relative z-10 bg-card shadow-sm ${className || ''}`}>
       <Collapsible open={isOpen} onOpenChange={setIsOpen}>
         <CollapsibleTrigger asChild>
-          <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors py-3">
+          <CardHeader className="cursor-pointer hover:bg-muted/50 transition-colors py-3 bg-card">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-green-500" />
@@ -72,8 +71,9 @@ export function ConversationSummary({ conversation, className }: ConversationSum
           </CardHeader>
         </CollapsibleTrigger>
         <CollapsibleContent>
-          <CardContent className="pt-0 pb-3">
-            <ScrollArea className="max-h-[200px]">
+          <CardContent className="pt-0 pb-3 bg-card">
+            {/* 使用原生滚动容器，避免 Radix ScrollArea 在动态高度场景下的问题 */}
+            <div className="max-h-[250px] overflow-y-auto pr-2 custom-scrollbar">
               <div className="space-y-3">
                 {summaryItems.map((item, index) => (
                   <div 
@@ -89,7 +89,7 @@ export function ConversationSummary({ conversation, className }: ConversationSum
                   </div>
                 ))}
               </div>
-            </ScrollArea>
+            </div>
           </CardContent>
         </CollapsibleContent>
       </Collapsible>
