@@ -578,7 +578,7 @@ export default function ChatPage() {
       <div className="h-screen flex flex-col">
         {/* 顶部导航 */}
         <header className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-          <div className="container px-3 sm:px-6 flex h-12 sm:h-14 items-center justify-between">
+          <div className="max-w-3xl mx-auto px-3 sm:px-6 flex h-12 sm:h-14 items-center justify-between">
             <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
               <Tooltip>
                 <TooltipTrigger asChild>
