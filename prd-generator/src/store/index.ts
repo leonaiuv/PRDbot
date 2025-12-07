@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { v4 as uuidv4 } from 'uuid';
-import { projectsDB, settingsDB, prdTasksDB } from '@/lib/db';
+import { projectsDB, settingsDB, prdTasksDB, translationTasksDB, translationCacheDB } from '@/lib/db';
 import type { 
   Project, 
   Settings, 
@@ -10,7 +10,10 @@ import type {
   SelectorData,
   QuestionMeta,
   PRDGenerationTask,
-  PRDGenerationTaskPersisted
+  PRDGenerationTaskPersisted,
+  TranslationTask,
+  TranslationCache,
+  LanguageConfig
 } from '@/types';
 
 // 项目Store状态
@@ -900,5 +903,287 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
       delete newChunks[projectId];
       return { tasks: newTasks, contentChunks: newChunks };
     });
+  },
+}));
+
+// ========== 翻译任务Store状态 ==========
+
+// 支持的语言列表
+export const SUPPORTED_LANGUAGES: LanguageConfig[] = [
+  { code: 'en', name: '英语', flag: '🇺🇸', nativeName: 'English' },
+  { code: 'ja', name: '日语', flag: '🇯🇵', nativeName: '日本語' },
+  { code: 'ko', name: '韩语', flag: '🇰🇷', nativeName: '한국어' },
+  { code: 'de', name: '德语', flag: '🇩🇪', nativeName: 'Deutsch' },
+  { code: 'fr', name: '法语', flag: '🇫🇷', nativeName: 'Français' },
+  { code: 'es', name: '西班牙语', flag: '🇪🇸', nativeName: 'Español' },
+];
+
+// 简单的字符串hash函数
+function simpleHash(str: string): string {
+  let hash = 0;
+  for (let i = 0; i < str.length; i++) {
+    const char = str.charCodeAt(i);
+    hash = ((hash << 5) - hash) + char;
+    hash = hash & hash; // Convert to 32bit integer
+  }
+  return Math.abs(hash).toString(36);
+}
+
+// 生成任务ID
+function generateTaskId(projectId: string, langCode: string): string {
+  return `${projectId}_${langCode}`;
+}
+
+// 生成缓存ID
+function generateCacheId(contentHash: string, langCode: string): string {
+  return `${contentHash}_${langCode}`;
+}
+
+interface TranslationStore {
+  // 任务映射: taskId -> 任务状态
+  tasks: Record<string, TranslationTask>;
+  // 缓存映射: cacheId -> 缓存内容 (内存级缓存，减少DB访问)
+  cacheMap: Record<string, TranslationCache>;
+  
+  // 获取任务
+  getTask: (projectId: string, langCode: string) => TranslationTask | undefined;
+  // 获取项目的所有任务
+  getProjectTasks: (projectId: string) => TranslationTask[];
+  // 检查缓存
+  checkCache: (projectId: string, prdContent: string, langCode: string) => Promise<TranslationCache | null>;
+  // 开始翻译任务
+  startTask: (projectId: string, langCode: string, langName: string) => AbortController;
+  // 更新任务进度
+  updateTaskProgress: (projectId: string, langCode: string, progress: number) => void;
+  // 完成任务并保存缓存
+  completeTask: (projectId: string, langCode: string, prdContent: string, translatedContent: string) => Promise<void>;
+  // 任务出错
+  errorTask: (projectId: string, langCode: string, error: string) => Promise<void>;
+  // 取消任务
+  cancelTask: (projectId: string, langCode: string) => Promise<void>;
+  // 清除任务
+  clearTask: (projectId: string, langCode: string) => Promise<void>;
+  // 恢复未完成的任务
+  restoreIncompleteTasks: () => Promise<void>;
+  // 清理过期缓存
+  cleanupOldCache: () => Promise<number>;
+  // 获取缓存的翻译结果
+  getCachedTranslation: (projectId: string, prdContent: string, langCode: string) => Promise<string | null>;
+}
+
+export const useTranslationStore = create<TranslationStore>((set, get) => ({
+  tasks: {},
+  cacheMap: {},
+
+  getTask: (projectId: string, langCode: string) => {
+    const taskId = generateTaskId(projectId, langCode);
+    return get().tasks[taskId];
+  },
+
+  getProjectTasks: (projectId: string) => {
+    const { tasks } = get();
+    return Object.values(tasks).filter(t => t.projectId === projectId);
+  },
+
+  checkCache: async (projectId: string, prdContent: string, langCode: string) => {
+    const contentHash = simpleHash(prdContent);
+    const cacheId = generateCacheId(contentHash, langCode);
+    
+    // 先检查内存缓存
+    const memCache = get().cacheMap[cacheId];
+    if (memCache) {
+      return memCache;
+    }
+    
+    // 再检查数据库
+    const dbCache = await translationCacheDB.getByHashAndLang(contentHash, langCode);
+    if (dbCache) {
+      // 加载到内存缓存
+      set(state => ({
+        cacheMap: { ...state.cacheMap, [cacheId]: dbCache }
+      }));
+      return dbCache;
+    }
+    
+    return null;
+  },
+
+  getCachedTranslation: async (projectId: string, prdContent: string, langCode: string) => {
+    const cache = await get().checkCache(projectId, prdContent, langCode);
+    return cache?.translatedContent || null;
+  },
+
+  startTask: (projectId: string, langCode: string, langName: string) => {
+    const taskId = generateTaskId(projectId, langCode);
+    const abortController = new AbortController();
+    
+    // 检查是否已有进行中的任务
+    const existingTask = get().tasks[taskId];
+    if (existingTask?.phase === 'translating' && existingTask.abortController) {
+      // 先取消旧任务
+      existingTask.abortController.abort();
+    }
+    
+    const task: TranslationTask = {
+      id: taskId,
+      projectId,
+      langCode,
+      langName,
+      phase: 'translating',
+      startTime: Date.now(),
+      progress: 0,
+      abortController,
+    };
+    
+    set(state => ({
+      tasks: { ...state.tasks, [taskId]: task }
+    }));
+    
+    // 异步持久化
+    translationTasksDB.save({
+      id: taskId,
+      projectId,
+      langCode,
+      langName,
+      phase: 'translating',
+      startTime: task.startTime,
+      progress: 0,
+    }).catch(console.error);
+    
+    return abortController;
+  },
+
+  updateTaskProgress: (projectId: string, langCode: string, progress: number) => {
+    const taskId = generateTaskId(projectId, langCode);
+    set(state => {
+      const task = state.tasks[taskId];
+      if (!task) return state;
+      return {
+        tasks: { ...state.tasks, [taskId]: { ...task, progress } }
+      };
+    });
+  },
+
+  completeTask: async (projectId: string, langCode: string, prdContent: string, translatedContent: string) => {
+    const taskId = generateTaskId(projectId, langCode);
+    const task = get().tasks[taskId];
+    if (!task) return;
+    
+    // 生成缓存
+    const contentHash = simpleHash(prdContent);
+    const cacheId = generateCacheId(contentHash, langCode);
+    const cache: TranslationCache = {
+      id: cacheId,
+      projectId,
+      langCode,
+      langName: task.langName,
+      contentHash,
+      translatedContent,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    
+    // 更新任务状态和缓存
+    set(state => ({
+      tasks: {
+        ...state.tasks,
+        [taskId]: { ...task, phase: 'completed', progress: 100, abortController: undefined }
+      },
+      cacheMap: { ...state.cacheMap, [cacheId]: cache }
+    }));
+    
+    // 持久化任务完成状态
+    await translationTasksDB.save({
+      id: taskId,
+      projectId,
+      langCode,
+      langName: task.langName,
+      phase: 'completed',
+      startTime: task.startTime,
+      progress: 100,
+    });
+    
+    // 保存缓存到数据库
+    await translationCacheDB.save(cache);
+  },
+
+  errorTask: async (projectId: string, langCode: string, error: string) => {
+    const taskId = generateTaskId(projectId, langCode);
+    const task = get().tasks[taskId];
+    if (!task) return;
+    
+    set(state => ({
+      tasks: {
+        ...state.tasks,
+        [taskId]: { ...task, phase: 'error', error, abortController: undefined }
+      }
+    }));
+    
+    await translationTasksDB.save({
+      id: taskId,
+      projectId,
+      langCode,
+      langName: task.langName,
+      phase: 'error',
+      startTime: task.startTime,
+      error,
+    });
+  },
+
+  cancelTask: async (projectId: string, langCode: string) => {
+    const taskId = generateTaskId(projectId, langCode);
+    const task = get().tasks[taskId];
+    if (task?.abortController) {
+      task.abortController.abort();
+    }
+    
+    set(state => {
+      const newTasks = { ...state.tasks };
+      delete newTasks[taskId];
+      return { tasks: newTasks };
+    });
+    
+    await translationTasksDB.delete(taskId);
+  },
+
+  clearTask: async (projectId: string, langCode: string) => {
+    const taskId = generateTaskId(projectId, langCode);
+    set(state => {
+      const newTasks = { ...state.tasks };
+      delete newTasks[taskId];
+      return { tasks: newTasks };
+    });
+    await translationTasksDB.delete(taskId);
+  },
+
+  restoreIncompleteTasks: async () => {
+    const incompleteTasks = await translationTasksDB.getInProgress();
+    
+    // 将进行中的任务标记为错误（因为请求已中断）
+    for (const task of incompleteTasks) {
+      const errorTask: TranslationTask = {
+        id: task.id,
+        projectId: task.projectId,
+        langCode: task.langCode,
+        langName: task.langName,
+        phase: 'error',
+        startTime: task.startTime,
+        error: '翻译过程中断，请重试',
+      };
+      
+      set(state => ({
+        tasks: { ...state.tasks, [task.id]: errorTask }
+      }));
+      
+      await translationTasksDB.save({
+        ...task,
+        phase: 'error',
+        error: '翻译过程中断，请重试',
+      });
+    }
+  },
+
+  cleanupOldCache: async () => {
+    return await translationCacheDB.cleanupOld();
   },
 }));

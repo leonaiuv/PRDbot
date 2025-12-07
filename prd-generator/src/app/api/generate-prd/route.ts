@@ -239,7 +239,7 @@ ${conversationHistory}
                       encoder.encode(`data: ${JSON.stringify({ content })}\n\n`)
                     );
                   }
-                } catch (e) {
+                } catch {
                   // 忽略解析错误
                 }
               }

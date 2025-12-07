@@ -15,7 +15,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import type { SelectorData, SelectorOption } from '@/types';
+import type { SelectorData } from '@/types';
 
 // 受控模式 Props（推荐：用于多选择器统一提交场景）
 interface ControlledSelectorProps {

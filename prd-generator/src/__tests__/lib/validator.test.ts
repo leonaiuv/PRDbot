@@ -24,7 +24,7 @@ describe('validator.ts - AI响应校验模块', () => {
 
     it('应该从代码块中提取JSON（无json标记）', () => {
       const text = '```\n{"questions": [], "meta": {}}\n```'
-      const { json, textContent } = extractJSON(text)
+      const { json } = extractJSON(text)
 
       expect(json).toBe('{"questions": [], "meta": {}}')
     })
@@ -244,7 +244,6 @@ describe('validator.ts - AI响应校验模块', () => {
   describe('aggregateSSEStream', () => {
     it('应该聚合SSE流式响应', async () => {
       const encoder = new TextEncoder()
-      const decoder = new TextDecoder()
 
       const stream = new ReadableStream({
         start(controller) {

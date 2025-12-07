@@ -15,7 +15,6 @@ interface GeneratingIndicatorProps {
 }
 
 export function GeneratingIndicator({
-  currentStep,
   stepIndex,
   elapsedTime,
   onCancel,

@@ -268,7 +268,7 @@ export function exportWord(content: string, filename: string): void {
 export async function copyToClipboard(text: string): Promise<void> {
   try {
     await navigator.clipboard.writeText(text);
-  } catch (err) {
+  } catch {
     // 备用方案
     const textArea = document.createElement('textarea');
     textArea.value = text;

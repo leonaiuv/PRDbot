@@ -12,6 +12,13 @@ export async function clearTestDatabase() {
   await db.settings.clear()
   await db.chatDrafts.clear()
   await db.prdTasks.clear()
+  // 清理翻译相关表
+  if (db.translationTasks) {
+    await db.translationTasks.clear()
+  }
+  if (db.translationCache) {
+    await db.translationCache.clear()
+  }
 }
 
 /**

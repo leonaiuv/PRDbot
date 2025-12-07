@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Tag, X, Check, Plus } from 'lucide-react';
+import { Tag, X, Check } from 'lucide-react';
 import { PROJECT_TAGS, type ProjectTagId } from '@/types';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,11 +31,6 @@ export function ProjectTagSelector({
     } else {
       onTagsChange([...selectedTags, tagId]);
     }
-  };
-
-  const removeTag = (tagId: ProjectTagId, e: React.MouseEvent) => {
-    e.stopPropagation();
-    onTagsChange(selectedTags.filter((t) => t !== tagId));
   };
 
   return (

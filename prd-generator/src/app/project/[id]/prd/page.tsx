@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, Construction, FileText, AlertCircle, RefreshCcw, Bot, User, Keyboard } from 'lucide-react';
+import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, FileText, AlertCircle, RefreshCcw, Bot, User } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -13,8 +13,6 @@ import dynamic from 'next/dynamic';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Separator } from '@/components/ui/separator';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -293,6 +291,7 @@ export default function PRDPage() {
     if (task?.phase === 'error') return;
     
     generatePRD();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shouldGenerate, currentProject, settings, isGenerating, projectId, getTask]);
 
   // 生成PRD文档
@@ -317,7 +316,7 @@ export default function PRDPage() {
     await clearTask(projectId);
 
     // 启动全局生成任务
-    const abortController = startTask(projectId);
+    startTask(projectId);
 
     try {
       // 构建对话历史
@@ -371,7 +370,7 @@ export default function PRDPage() {
               fullContent += content;
               appendTaskContent(projectId, content);
             }
-          } catch (e) {
+          } catch {
             // 忽略解析错误
           }
         }
@@ -387,7 +386,7 @@ export default function PRDPage() {
               fullContent += content;
               appendTaskContent(projectId, content);
             }
-          } catch (e) {
+          } catch {
             // 忽略解析错误
           }
         }
@@ -500,7 +499,7 @@ ${currentProject.prdContent}
               fullContent += content;
               appendStreamContent(content);
             }
-          } catch (e) {
+          } catch {
             // 忽略解析错误
           }
         }
@@ -516,7 +515,7 @@ ${currentProject.prdContent}
               fullContent += content;
               appendStreamContent(content);
             }
-          } catch (e) {
+          } catch {
             // 忽略解析错误
           }
         }
@@ -649,6 +648,7 @@ ${currentProject.prdContent}
               {/* 翻译功能 */}
               {currentProject.prdContent && settings && (
                 <MultiLanguagePRD
+                  projectId={projectId}
                   prdContent={currentProject.prdContent}
                   projectName={currentProject.name}
                   model={settings.defaultModel}

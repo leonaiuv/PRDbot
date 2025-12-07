@@ -14,13 +14,13 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-import { SmartSelector, SelectedAnswer } from '@/components/smart-selector';
+import { SmartSelector } from '@/components/smart-selector';
 import { SelectorSkeleton } from '@/components/selector-skeleton';
 import { GeneratingIndicator } from '@/components/generating-indicator';
 import { GenerationStatusBar } from '@/components/generation-status-bar';
 import { useProjectStore, useSettingsStore, useChatStore } from '@/store';
 import { chatDraftsDB } from '@/lib/db';
-import type { ConversationMessage, SelectorData, QuestionMeta, GenerationPhase } from '@/types';
+import type { ConversationMessage, SelectorData, QuestionMeta } from '@/types';
 import type { ValidatedAIResponse } from '@/lib/validator';
 
 // 后端校验响应类型
@@ -90,7 +90,7 @@ export default function ChatPage() {
   const currentStep = chatTask?.currentStep ?? 'understanding';
   const stepIndex = chatTask?.stepIndex ?? 0;
   const elapsedTime = chatTask?.elapsedTime ?? 0;
-  const pendingSelectorsFromStore = chatTask?.pendingSelectors ?? [];
+  const pendingSelectorsFromStore = useMemo(() => chatTask?.pendingSelectors ?? [], [chatTask?.pendingSelectors]);
   const questionMeta = chatTask?.questionMeta ?? null;
   const canCancel = chatTask?.canCancel ?? true;
   const error = chatTask?.error ?? null;
@@ -180,6 +180,7 @@ export default function ChatPage() {
     if (currentProject && currentProject.conversation.length === 0 && currentProject.initialInput && settings) {
       sendMessage(currentProject.initialInput);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentProject, settings]);
 
   // 进度模拟器 - 当开始生成时启动（使用 ref 存储函数依赖，避免不必要的定时器重建）
@@ -483,6 +484,7 @@ export default function ChatPage() {
   }, [currentSelectors, selectionsMap, sendMessage, resetGeneration, projectId]);
 
   // 处理选择器提交（兼容旧的单个提交模式 - 仅用于单个选择器场景）
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const handleSelectorSubmit = async (selectorId: string, values: string[]) => {
     const selector = currentSelectors.find(s => s.id === selectorId);
     if (!selector) return;
@@ -542,11 +544,6 @@ export default function ChatPage() {
   // 生成PRD
   const handleGeneratePRD = async () => {
     if (!currentProject) return;
-    
-    // 构建对话历史文本
-    const conversationHistory = currentProject.conversation
-      .map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}`)
-      .join('\n\n');
 
     // 更新项目状态
     await setProjectStatus('generated');

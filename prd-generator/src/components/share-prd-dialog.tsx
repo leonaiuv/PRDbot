@@ -64,7 +64,7 @@ export function SharePRDDialog({ prdContent, projectName }: SharePRDDialogProps)
       });
 
       setShareLink(link);
-    } catch (error) {
+    } catch {
       toast.error('生成分享链接失败');
     }
   };

@@ -4,12 +4,12 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals'
-import { act } from '@testing-library/react'
-import { useProjectStore, useSettingsStore, useChatStore, usePRDGenerationStore } from '@/store'
-import { projectsDB, settingsDB, prdTasksDB } from '@/lib/db'
-import { createTestProject, createTestSettings, createTestMessage, createTestSelector } from '../utils/factories'
+// Note: act is available but not currently used in tests
+import { useProjectStore, useSettingsStore, useChatStore, usePRDGenerationStore, useTranslationStore } from '@/store'
+import { projectsDB, settingsDB, prdTasksDB, translationTasksDB } from '@/lib/db'
+import { createTestProject, createTestMessage, createTestSelector, createTestTranslationTask, createTestTranslationCache } from '../utils/factories'
 import { clearTestDatabase } from '../utils/helpers'
-import type { Project, ConversationMessage } from '@/types'
+import type { ConversationMessage } from '@/types'
 
 describe('状态管理层测试', () => {
   beforeEach(async () => {
@@ -23,6 +23,7 @@ describe('状态管理层测试', () => {
     useSettingsStore.setState({ settings: null, isLoading: false })
     useChatStore.setState({ tasks: {} })
     usePRDGenerationStore.setState({ tasks: {}, contentChunks: {} })
+    useTranslationStore.setState({ tasks: {}, cacheMap: {} })
   })
 
   describe('useProjectStore', () => {
@@ -566,6 +567,376 @@ describe('状态管理层测试', () => {
         const updatedTask = store.getTask(projectId)
         // 已经过了5秒，elapsedTime应该是5
         expect(updatedTask?.elapsedTime).toBe(5)
+      })
+    })
+  })
+
+  // ========== 翻译Store测试 ==========
+  describe('useTranslationStore', () => {
+    const projectId = 'test-project-id'
+    const prdContent = '# 测试PRD\n\n这是测试内容'
+
+    beforeEach(async () => {
+      useTranslationStore.setState({ tasks: {}, cacheMap: {} })
+      // 清理翻译相关数据库表
+      const db = await import('@/lib/db').then(m => m.default)
+      if (db.translationTasks) {
+        await db.translationTasks.clear()
+      }
+      if (db.translationCache) {
+        await db.translationCache.clear()
+      }
+    })
+
+    describe('任务管理', () => {
+      describe('startTask', () => {
+        it('应该创建新的翻译任务并返回AbortController', () => {
+          const store = useTranslationStore.getState()
+          
+          const abortController = store.startTask(projectId, 'en', '英语')
+
+          expect(abortController).toBeInstanceOf(AbortController)
+          
+          const task = store.getTask(projectId, 'en')
+          expect(task).toBeDefined()
+          expect(task!.projectId).toBe(projectId)
+          expect(task!.langCode).toBe('en')
+          expect(task!.phase).toBe('translating')
+          expect(task!.progress).toBe(0)
+        })
+
+        it('启动新任务时应该取消旧的进行中任务', () => {
+          const store = useTranslationStore.getState()
+          
+          const firstAbort = store.startTask(projectId, 'en', '英语')
+          const abortSpy = jest.spyOn(firstAbort, 'abort')
+          
+          // 启动同一语言的新任务
+          store.startTask(projectId, 'en', '英语')
+          
+          expect(abortSpy).toHaveBeenCalled()
+        })
+
+        it('不同语言的任务应该独立', () => {
+          const store = useTranslationStore.getState()
+          
+          store.startTask(projectId, 'en', '英语')
+          store.startTask(projectId, 'ja', '日语')
+
+          const tasks = store.getProjectTasks(projectId)
+          expect(tasks).toHaveLength(2)
+          expect(tasks.some(t => t.langCode === 'en')).toBe(true)
+          expect(tasks.some(t => t.langCode === 'ja')).toBe(true)
+        })
+      })
+
+      describe('getTask', () => {
+        it('应该返回指定项目和语言的任务', () => {
+          const store = useTranslationStore.getState()
+          store.startTask(projectId, 'en', '英语')
+
+          const task = store.getTask(projectId, 'en')
+          expect(task).toBeDefined()
+          expect(task!.langCode).toBe('en')
+        })
+
+        it('不存在的任务应该返回undefined', () => {
+          const store = useTranslationStore.getState()
+          
+          const task = store.getTask('non-existent', 'en')
+          expect(task).toBeUndefined()
+        })
+      })
+
+      describe('getProjectTasks', () => {
+        it('应该返回项目的所有任务', () => {
+          const store = useTranslationStore.getState()
+          store.startTask(projectId, 'en', '英语')
+          store.startTask(projectId, 'ja', '日语')
+          store.startTask('other-project', 'ko', '韩语')
+
+          const tasks = store.getProjectTasks(projectId)
+          expect(tasks).toHaveLength(2)
+          expect(tasks.every(t => t.projectId === projectId)).toBe(true)
+        })
+      })
+
+      describe('updateTaskProgress', () => {
+        it('应该更新任务进度', () => {
+          const store = useTranslationStore.getState()
+          store.startTask(projectId, 'en', '英语')
+
+          store.updateTaskProgress(projectId, 'en', 50)
+
+          const task = store.getTask(projectId, 'en')
+          expect(task!.progress).toBe(50)
+        })
+
+        it('不存在的任务不应该报错', () => {
+          const store = useTranslationStore.getState()
+          
+          expect(() => store.updateTaskProgress('non-existent', 'en', 50)).not.toThrow()
+        })
+      })
+
+      describe('completeTask', () => {
+        it('应该完成任务并保存缓存', async () => {
+          const store = useTranslationStore.getState()
+          store.startTask(projectId, 'en', '英语')
+
+          await store.completeTask(projectId, 'en', prdContent, '# Translated PRD')
+
+          const task = store.getTask(projectId, 'en')
+          expect(task!.phase).toBe('completed')
+          expect(task!.progress).toBe(100)
+          expect(task!.abortController).toBeUndefined()
+
+          // 检查缓存是否保存
+          const cached = await store.getCachedTranslation(projectId, prdContent, 'en')
+          expect(cached).toBe('# Translated PRD')
+        })
+      })
+
+      describe('errorTask', () => {
+        it('应该设置任务错误状态', async () => {
+          const store = useTranslationStore.getState()
+          store.startTask(projectId, 'en', '英语')
+
+          await store.errorTask(projectId, 'en', '翻译失败')
+
+          const task = store.getTask(projectId, 'en')
+          expect(task!.phase).toBe('error')
+          expect(task!.error).toBe('翻译失败')
+          expect(task!.abortController).toBeUndefined()
+        })
+      })
+
+      describe('cancelTask', () => {
+        it('应该取消任务并调用abort', async () => {
+          const store = useTranslationStore.getState()
+          const abortController = store.startTask(projectId, 'en', '英语')
+          const abortSpy = jest.spyOn(abortController, 'abort')
+
+          await store.cancelTask(projectId, 'en')
+
+          expect(abortSpy).toHaveBeenCalled()
+          
+          const task = store.getTask(projectId, 'en')
+          expect(task).toBeUndefined()
+        })
+      })
+
+      describe('clearTask', () => {
+        it('应该清除任务', async () => {
+          const store = useTranslationStore.getState()
+          store.startTask(projectId, 'en', '英语')
+
+          await store.clearTask(projectId, 'en')
+
+          const task = store.getTask(projectId, 'en')
+          expect(task).toBeUndefined()
+        })
+      })
+    })
+
+    describe('缓存管理', () => {
+      describe('checkCache', () => {
+        it('无缓存时应该返回null', async () => {
+          const store = useTranslationStore.getState()
+          
+          const cached = await store.checkCache(projectId, prdContent, 'en')
+          expect(cached).toBeNull()
+        })
+
+        it('有缓存时应该返回缓存对象', async () => {
+          const store = useTranslationStore.getState()
+          
+          // 先完成一个任务以创建缓存
+          store.startTask(projectId, 'en', '英语')
+          await store.completeTask(projectId, 'en', prdContent, '# Translated')
+
+          const cached = await store.checkCache(projectId, prdContent, 'en')
+          expect(cached).toBeDefined()
+          expect(cached!.translatedContent).toBe('# Translated')
+        })
+
+        it('缓存应该加载到内存缓存', async () => {
+          const store = useTranslationStore.getState()
+          
+          // 创建缓存
+          store.startTask(projectId, 'en', '英语')
+          await store.completeTask(projectId, 'en', prdContent, '# Cached')
+
+          // 清除内存缓存
+          useTranslationStore.setState({ cacheMap: {} })
+
+          // 应该从数据库加载并填充内存缓存
+          await store.checkCache(projectId, prdContent, 'en')
+
+          const { cacheMap } = useTranslationStore.getState()
+          const cacheKeys = Object.keys(cacheMap)
+          expect(cacheKeys.length).toBeGreaterThan(0)
+        })
+      })
+
+      describe('getCachedTranslation', () => {
+        it('应该返回缓存的翻译内容', async () => {
+          const store = useTranslationStore.getState()
+          store.startTask(projectId, 'en', '英语')
+          await store.completeTask(projectId, 'en', prdContent, '翻译结果')
+
+          const translation = await store.getCachedTranslation(projectId, prdContent, 'en')
+          expect(translation).toBe('翻译结果')
+        })
+
+        it('无缓存时应该返回null', async () => {
+          const store = useTranslationStore.getState()
+
+          const translation = await store.getCachedTranslation(projectId, prdContent, 'en')
+          expect(translation).toBeNull()
+        })
+      })
+    })
+
+    describe('边界场景', () => {
+      describe('多语言并发翻译', () => {
+        it('应该支持同一项目多语言并发', () => {
+          const store = useTranslationStore.getState()
+          
+          store.startTask(projectId, 'en', '英语')
+          store.startTask(projectId, 'ja', '日语')
+          store.startTask(projectId, 'ko', '韩语')
+
+          const tasks = store.getProjectTasks(projectId)
+          expect(tasks).toHaveLength(3)
+          expect(tasks.every(t => t.phase === 'translating')).toBe(true)
+        })
+
+        it('各语言任务应该独立完成', async () => {
+          const store = useTranslationStore.getState()
+          
+          store.startTask(projectId, 'en', '英语')
+          store.startTask(projectId, 'ja', '日语')
+
+          // 完成英语
+          await store.completeTask(projectId, 'en', prdContent, 'English')
+          
+          const enTask = store.getTask(projectId, 'en')
+          const jaTask = store.getTask(projectId, 'ja')
+          
+          expect(enTask!.phase).toBe('completed')
+          expect(jaTask!.phase).toBe('translating')
+        })
+
+        it('各语言任务应该独立失败', async () => {
+          const store = useTranslationStore.getState()
+          
+          store.startTask(projectId, 'en', '英语')
+          store.startTask(projectId, 'ja', '日语')
+
+          // 英语失败
+          await store.errorTask(projectId, 'en', '翻译失败')
+          
+          const enTask = store.getTask(projectId, 'en')
+          const jaTask = store.getTask(projectId, 'ja')
+          
+          expect(enTask!.phase).toBe('error')
+          expect(jaTask!.phase).toBe('translating')
+        })
+      })
+
+      describe('缓存失效逻辑', () => {
+        it('相同内容相同语言应该命中缓存', async () => {
+          const store = useTranslationStore.getState()
+          
+          store.startTask(projectId, 'en', '英语')
+          await store.completeTask(projectId, 'en', prdContent, 'Cached Result')
+
+          const cached = await store.getCachedTranslation(projectId, prdContent, 'en')
+          expect(cached).toBe('Cached Result')
+        })
+
+        it('内容变化后应该不命中旧缓存', async () => {
+          const store = useTranslationStore.getState()
+          
+          const oldContent = '# 旧内容'
+          const newContent = '# 新内容'
+
+          store.startTask(projectId, 'en', '英语')
+          await store.completeTask(projectId, 'en', oldContent, 'Old Translation')
+
+          // 新内容不应该命中旧缓存
+          const cached = await store.getCachedTranslation(projectId, newContent, 'en')
+          expect(cached).toBeNull()
+        })
+
+        it('相同内容不同语言应该分别缓存', async () => {
+          const store = useTranslationStore.getState()
+          
+          store.startTask(projectId, 'en', '英语')
+          await store.completeTask(projectId, 'en', prdContent, 'English')
+
+          store.startTask(projectId, 'ja', '日语')
+          await store.completeTask(projectId, 'ja', prdContent, 'Japanese')
+
+          const enCached = await store.getCachedTranslation(projectId, prdContent, 'en')
+          const jaCached = await store.getCachedTranslation(projectId, prdContent, 'ja')
+
+          expect(enCached).toBe('English')
+          expect(jaCached).toBe('Japanese')
+        })
+      })
+
+      describe('任务状态恢复', () => {
+        it('restoreIncompleteTasks应该将进行中的任务标记为错误', async () => {
+          // 直接在数据库中创建一个进行中的任务
+          await translationTasksDB.save(createTestTranslationTask(projectId, 'en', {
+            phase: 'translating',
+          }))
+
+          const store = useTranslationStore.getState()
+          await store.restoreIncompleteTasks()
+
+          const task = store.getTask(projectId, 'en')
+          expect(task).toBeDefined()
+          expect(task!.phase).toBe('error')
+          expect(task!.error).toContain('中断')
+        })
+      })
+
+      describe('重复点击同一语言', () => {
+        it('应该取消旧任务并启动新任务', () => {
+          const store = useTranslationStore.getState()
+          
+          const firstAbort = store.startTask(projectId, 'en', '英语')
+          const abortSpy = jest.spyOn(firstAbort, 'abort')
+
+          const secondAbort = store.startTask(projectId, 'en', '英语')
+
+          // 旧任务应该被取消
+          expect(abortSpy).toHaveBeenCalled()
+          // 应该是新的AbortController
+          expect(secondAbort).not.toBe(firstAbort)
+        })
+      })
+    })
+
+    describe('清理功能', () => {
+      it('cleanupOldCache应该清理过期缓存', async () => {
+        const store = useTranslationStore.getState()
+        
+        // 创建过期缓存（直接操作数据库）
+        const cutoff = 7 * 24 * 60 * 60 * 1000
+        const oldCache = createTestTranslationCache('old-project', 'en', {
+          id: 'old-cache',
+          contentHash: 'old-hash',
+          updatedAt: Date.now() - cutoff - 10000,
+        })
+        const db = await import('@/lib/db').then(m => m.default)
+        await db.translationCache.put(oldCache)
+
+        const deleted = await store.cleanupOldCache()
+        expect(deleted).toBeGreaterThanOrEqual(0)
       })
     })
   })

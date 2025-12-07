@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Upload, FileText, Loader2, Wand2, AlertCircle } from 'lucide-react';
+import { Upload, FileText, Loader2, Wand2 } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -38,7 +38,6 @@ export function ImportPRDDialog({
   const [open, setOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'paste' | 'file'>('paste');
   const [content, setContent] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [suggestions, setSuggestions] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -60,7 +59,7 @@ export function ImportPRDDialog({
       const text = await file.text();
       setContent(text);
       toast.success(`已读取文件: ${file.name}`);
-    } catch (error) {
+    } catch {
       toast.error('读取文件失败');
     }
   };
@@ -98,7 +97,7 @@ export function ImportPRDDialog({
 
       const data = await response.json();
       setSuggestions(data.content);
-    } catch (error) {
+    } catch {
       toast.error('分析失败');
     } finally {
       setIsAnalyzing(false);

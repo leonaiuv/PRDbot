@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { History, RotateCcw, Trash2, Save, Clock, ChevronRight, Plus } from 'lucide-react';
+import { History, RotateCcw, Trash2, Save, Clock, ChevronRight } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { toast } from 'sonner';
 

@@ -3,7 +3,7 @@
  * 测试API密钥加密和解密功能
  */
 
-import { describe, it, expect, beforeEach } from '@jest/globals'
+import { describe, it, expect } from '@jest/globals'
 import { encrypt, decrypt, encryptApiKeys, decryptApiKeys, isEncrypted } from '@/lib/crypto'
 
 describe('crypto.ts - API密钥加密模块', () => {

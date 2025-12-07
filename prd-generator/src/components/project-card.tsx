@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { MoreVertical, Trash2, FileDown, Play, Eye, Tag } from 'lucide-react';
+import { MoreVertical, Trash2, FileDown, Play, Eye } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 

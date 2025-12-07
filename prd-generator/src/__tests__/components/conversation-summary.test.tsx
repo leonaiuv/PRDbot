@@ -18,11 +18,8 @@ jest.mock('lucide-react', () => ({
 }));
 
 // Mock Collapsible components from Radix UI
-let collapsibleState = false;
 jest.mock('@/components/ui/collapsible', () => ({
   Collapsible: ({ children, open, onOpenChange }: { children: React.ReactNode; open: boolean; onOpenChange: (open: boolean) => void }) => {
-    // Update external state tracker
-    collapsibleState = open;
     return (
       <div data-testid="collapsible" data-state={open ? 'open' : 'closed'}>
         {React.Children.map(children, child => {
@@ -34,7 +31,7 @@ jest.mock('@/components/ui/collapsible', () => ({
       </div>
     );
   },
-  CollapsibleTrigger: ({ children, asChild, onOpenChange, open }: { children: React.ReactNode; asChild?: boolean; onOpenChange?: (open: boolean) => void; open?: boolean }) => (
+  CollapsibleTrigger: ({ children, onOpenChange, open }: { children: React.ReactNode; asChild?: boolean; onOpenChange?: (open: boolean) => void; open?: boolean }) => (
     <div 
       data-testid="collapsible-trigger" 
       onClick={() => onOpenChange && onOpenChange(!open)}
@@ -72,7 +69,7 @@ describe('ConversationSummary 组件', () => {
   };
 
   beforeEach(() => {
-    collapsibleState = false;
+    // Reset mock state if needed
   });
 
   describe('渲染逻辑', () => {

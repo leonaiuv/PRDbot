@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Project, Settings, ChatDraft, PRDGenerationTaskPersisted, PRDVersion } from '@/types';
+import type { Project, Settings, ChatDraft, PRDGenerationTaskPersisted, PRDVersion, TranslationTaskPersisted, TranslationCache } from '@/types';
 import { encryptApiKeys, decryptApiKeys, isEncrypted } from './crypto';
 
 // 定义数据库类
@@ -9,6 +9,8 @@ class PRDDatabase extends Dexie {
   chatDrafts!: EntityTable<ChatDraft, 'projectId'>;
   prdTasks!: EntityTable<PRDGenerationTaskPersisted, 'projectId'>;
   prdVersions!: EntityTable<PRDVersion, 'id'>;
+  translationTasks!: EntityTable<TranslationTaskPersisted, 'id'>;
+  translationCache!: EntityTable<TranslationCache, 'id'>;
 
   constructor() {
     super('PRDGeneratorDB');
@@ -34,6 +36,17 @@ class PRDDatabase extends Dexie {
       chatDrafts: 'projectId, updatedAt',
       prdTasks: 'projectId, phase, updatedAt',
       prdVersions: 'id, projectId, createdAt'
+    });
+
+    // 版本4: 添加翻译任务和翻译缓存
+    this.version(4).stores({
+      projects: 'id, name, createdAt, updatedAt, status',
+      settings: 'id',
+      chatDrafts: 'projectId, updatedAt',
+      prdTasks: 'projectId, phase, updatedAt',
+      prdVersions: 'id, projectId, createdAt',
+      translationTasks: 'id, projectId, langCode, phase, updatedAt',
+      translationCache: 'id, projectId, langCode, contentHash, updatedAt'
     });
   }
 }
@@ -265,6 +278,108 @@ export const prdVersionsDB = {
     const toDelete = versions.slice(keepCount);
     const ids = toDelete.map(v => v.id);
     return await db.prdVersions.bulkDelete(ids).then(() => ids.length);
+  }
+};
+
+// ========== 翻译任务操作函数 ==========
+export const translationTasksDB = {
+  // 获取指定任务
+  async get(taskId: string): Promise<TranslationTaskPersisted | undefined> {
+    return await db.translationTasks.get(taskId);
+  },
+
+  // 获取项目的所有翻译任务
+  async getByProject(projectId: string): Promise<TranslationTaskPersisted[]> {
+    return await db.translationTasks.where('projectId').equals(projectId).toArray();
+  },
+
+  // 保存或更新任务
+  async save(task: Omit<TranslationTaskPersisted, 'updatedAt'>): Promise<string> {
+    const taskWithTime: TranslationTaskPersisted = {
+      ...task,
+      updatedAt: Date.now()
+    };
+    await db.translationTasks.put(taskWithTime);
+    return task.id;
+  },
+
+  // 删除任务
+  async delete(taskId: string): Promise<void> {
+    return await db.translationTasks.delete(taskId);
+  },
+
+  // 获取所有进行中的任务
+  async getInProgress(): Promise<TranslationTaskPersisted[]> {
+    return await db.translationTasks.where('phase').equals('translating').toArray();
+  },
+
+  // 清理已完成的任务（1天前）
+  async cleanupCompleted(): Promise<number> {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const completedTasks = await db.translationTasks
+      .where('phase')
+      .equals('completed')
+      .and(task => task.updatedAt < cutoff)
+      .toArray();
+    
+    const ids = completedTasks.map(t => t.id);
+    return await db.translationTasks.bulkDelete(ids).then(() => ids.length);
+  }
+};
+
+// ========== 翻译缓存操作函数 ==========
+export const translationCacheDB = {
+  // 根据cacheId获取缓存
+  async get(cacheId: string): Promise<TranslationCache | undefined> {
+    return await db.translationCache.get(cacheId);
+  },
+
+  // 根据内容hash和语言代码获取缓存
+  async getByHashAndLang(contentHash: string, langCode: string): Promise<TranslationCache | undefined> {
+    return await db.translationCache
+      .where('contentHash')
+      .equals(contentHash)
+      .and(cache => cache.langCode === langCode)
+      .first();
+  },
+
+  // 获取项目的所有缓存
+  async getByProject(projectId: string): Promise<TranslationCache[]> {
+    return await db.translationCache.where('projectId').equals(projectId).toArray();
+  },
+
+  // 保存缓存
+  async save(cache: Omit<TranslationCache, 'createdAt' | 'updatedAt'> & { createdAt?: number }): Promise<string> {
+    const now = Date.now();
+    const cacheWithTime: TranslationCache = {
+      ...cache,
+      createdAt: cache.createdAt || now,
+      updatedAt: now
+    };
+    await db.translationCache.put(cacheWithTime);
+    return cache.id;
+  },
+
+  // 删除缓存
+  async delete(cacheId: string): Promise<void> {
+    return await db.translationCache.delete(cacheId);
+  },
+
+  // 删除项目的所有缓存
+  async deleteByProject(projectId: string): Promise<number> {
+    return await db.translationCache.where('projectId').equals(projectId).delete();
+  },
+
+  // 清理过期缓存（7天前）
+  async cleanupOld(): Promise<number> {
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const oldCaches = await db.translationCache
+      .where('updatedAt')
+      .below(cutoff)
+      .toArray();
+    
+    const ids = oldCaches.map(c => c.id);
+    return await db.translationCache.bulkDelete(ids).then(() => ids.length);
   }
 };
 

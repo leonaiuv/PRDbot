@@ -4,9 +4,9 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach } from '@jest/globals'
-import db, { projectsDB, settingsDB, chatDraftsDB, prdTasksDB } from '@/lib/db'
-import { createTestProject, createTestSettings, createTestChatDraft, createTestPRDTask } from '../utils/factories'
-import { clearTestDatabase, isValidTimestamp, isValidUUID } from '../utils/helpers'
+import db, { projectsDB, settingsDB, chatDraftsDB, prdTasksDB, translationTasksDB, translationCacheDB } from '@/lib/db'
+import { createTestProject, createTestChatDraft, createTestPRDTask, createTestTranslationTask, createTestTranslationCache } from '../utils/factories'
+import { clearTestDatabase, isValidTimestamp } from '../utils/helpers'
 
 describe('db.ts - 数据持久化层', () => {
   beforeEach(async () => {
@@ -301,6 +301,318 @@ describe('db.ts - 数据持久化层', () => {
 
       expect(remainingOld).toBeUndefined()
       expect(remainingNew).toBeDefined()
+    })
+  })
+
+  // ========== 翻译任务持久化测试 ==========
+  describe('translationTasksDB', () => {
+    const projectId = 'test-project-id'
+
+    describe('save和get', () => {
+      it('应该保存和获取翻译任务', async () => {
+        const task = createTestTranslationTask(projectId, 'en', {
+          phase: 'translating',
+          progress: 50,
+        })
+
+        await translationTasksDB.save(task)
+
+        const retrieved = await translationTasksDB.get(task.id)
+        expect(retrieved).toBeDefined()
+        expect(retrieved!.projectId).toBe(projectId)
+        expect(retrieved!.langCode).toBe('en')
+        expect(retrieved!.phase).toBe('translating')
+        expect(retrieved!.progress).toBe(50)
+      })
+
+      it('应该自动更新updatedAt', async () => {
+        const task = createTestTranslationTask(projectId, 'ja')
+        const originalUpdatedAt = task.updatedAt
+
+        await new Promise(resolve => setTimeout(resolve, 10))
+        await translationTasksDB.save(task)
+
+        const retrieved = await translationTasksDB.get(task.id)
+        expect(retrieved!.updatedAt).toBeGreaterThanOrEqual(originalUpdatedAt)
+      })
+    })
+
+    describe('getByProject', () => {
+      it('应该获取项目的所有翻译任务', async () => {
+        await translationTasksDB.save(createTestTranslationTask(projectId, 'en'))
+        await translationTasksDB.save(createTestTranslationTask(projectId, 'ja'))
+        await translationTasksDB.save(createTestTranslationTask('other-project', 'ko'))
+
+        const tasks = await translationTasksDB.getByProject(projectId)
+
+        expect(tasks).toHaveLength(2)
+        expect(tasks.every(t => t.projectId === projectId)).toBe(true)
+      })
+
+      it('空项目应该返回空数组', async () => {
+        const tasks = await translationTasksDB.getByProject('non-existent-project')
+        expect(tasks).toEqual([])
+      })
+    })
+
+    describe('getInProgress', () => {
+      it('应该获取所有进行中的任务', async () => {
+        await translationTasksDB.save(createTestTranslationTask(projectId, 'en', { phase: 'translating' }))
+        await translationTasksDB.save(createTestTranslationTask(projectId, 'ja', { phase: 'completed' }))
+        await translationTasksDB.save(createTestTranslationTask('other', 'ko', { phase: 'translating' }))
+
+        const inProgress = await translationTasksDB.getInProgress()
+
+        expect(inProgress).toHaveLength(2)
+        expect(inProgress.every(t => t.phase === 'translating')).toBe(true)
+      })
+    })
+
+    describe('delete', () => {
+      it('应该删除翻译任务', async () => {
+        const task = createTestTranslationTask(projectId, 'en')
+        await translationTasksDB.save(task)
+
+        await translationTasksDB.delete(task.id)
+
+        const retrieved = await translationTasksDB.get(task.id)
+        expect(retrieved).toBeUndefined()
+      })
+
+      it('删除不存在的任务不应该报错', async () => {
+        await expect(translationTasksDB.delete('non-existent')).resolves.not.toThrow()
+      })
+    })
+
+    describe('cleanupCompleted', () => {
+      it('应该清理1天前已完成的任务', async () => {
+        const cutoff = 24 * 60 * 60 * 1000
+
+        const oldTask = createTestTranslationTask('old-project', 'en', {
+          id: 'old-project_en',
+          phase: 'completed',
+        })
+        const newTask = createTestTranslationTask('new-project', 'ja', {
+          id: 'new-project_ja',
+          phase: 'completed',
+        })
+
+        // 直接操作数据库以设置准确的时间戳
+        const oldTaskWithTime = {
+          ...oldTask,
+          updatedAt: Date.now() - cutoff - 10000,
+        }
+        const newTaskWithTime = {
+          ...newTask,
+          updatedAt: Date.now(),
+        }
+
+        await db.translationTasks.put(oldTaskWithTime)
+        await db.translationTasks.put(newTaskWithTime)
+
+        const deleted = await translationTasksDB.cleanupCompleted()
+
+        expect(deleted).toBe(1)
+
+        const remainingOld = await translationTasksDB.get('old-project_en')
+        const remainingNew = await translationTasksDB.get('new-project_ja')
+
+        expect(remainingOld).toBeUndefined()
+        expect(remainingNew).toBeDefined()
+      })
+    })
+  })
+
+  // ========== 翻译缓存测试 ==========
+  describe('translationCacheDB', () => {
+    const projectId = 'test-project-id'
+
+    describe('save和get', () => {
+      it('应该保存和获取翻译缓存', async () => {
+        const cache = createTestTranslationCache(projectId, 'en', {
+          translatedContent: '# English PRD\n\nContent here.',
+        })
+
+        await translationCacheDB.save(cache)
+
+        const retrieved = await translationCacheDB.get(cache.id)
+        expect(retrieved).toBeDefined()
+        expect(retrieved!.translatedContent).toBe('# English PRD\n\nContent here.')
+      })
+
+      it('应该自动设置createdAt和updatedAt', async () => {
+        const now = Date.now()
+        const cache = createTestTranslationCache(projectId, 'ja')
+        // @ts-expect-error - 为测试目的删除时间戳
+        delete cache.createdAt
+        // @ts-expect-error - 为测试目的删除时间戳
+        delete cache.updatedAt
+
+        await translationCacheDB.save(cache)
+
+        const retrieved = await translationCacheDB.get(cache.id)
+        expect(retrieved!.createdAt).toBeGreaterThanOrEqual(now)
+        expect(retrieved!.updatedAt).toBeGreaterThanOrEqual(now)
+      })
+    })
+
+    describe('getByHashAndLang', () => {
+      it('应该根据内容hash和语言代码查找缓存', async () => {
+        const cache = createTestTranslationCache(projectId, 'en', {
+          contentHash: 'unique-hash-123',
+        })
+        await translationCacheDB.save(cache)
+
+        const found = await translationCacheDB.getByHashAndLang('unique-hash-123', 'en')
+
+        expect(found).toBeDefined()
+        expect(found!.id).toBe(cache.id)
+      })
+
+      it('不匹配的hash应该返回undefined', async () => {
+        const cache = createTestTranslationCache(projectId, 'en', {
+          contentHash: 'hash-1',
+        })
+        await translationCacheDB.save(cache)
+
+        const notFound = await translationCacheDB.getByHashAndLang('hash-2', 'en')
+        expect(notFound).toBeUndefined()
+      })
+
+      it('不匹配的语言应该返回undefined', async () => {
+        const cache = createTestTranslationCache(projectId, 'en', {
+          contentHash: 'hash-1',
+        })
+        await translationCacheDB.save(cache)
+
+        const notFound = await translationCacheDB.getByHashAndLang('hash-1', 'ja')
+        expect(notFound).toBeUndefined()
+      })
+    })
+
+    describe('getByProject', () => {
+      it('应该获取项目的所有缓存', async () => {
+        await translationCacheDB.save(createTestTranslationCache(projectId, 'en', { id: 'cache1', contentHash: 'h1' }))
+        await translationCacheDB.save(createTestTranslationCache(projectId, 'ja', { id: 'cache2', contentHash: 'h2' }))
+        await translationCacheDB.save(createTestTranslationCache('other-project', 'ko', { id: 'cache3', contentHash: 'h3' }))
+
+        const caches = await translationCacheDB.getByProject(projectId)
+
+        expect(caches).toHaveLength(2)
+        expect(caches.every(c => c.projectId === projectId)).toBe(true)
+      })
+    })
+
+    describe('deleteByProject', () => {
+      it('应该删除项目的所有缓存', async () => {
+        await translationCacheDB.save(createTestTranslationCache(projectId, 'en', { id: 'cache1', contentHash: 'h1' }))
+        await translationCacheDB.save(createTestTranslationCache(projectId, 'ja', { id: 'cache2', contentHash: 'h2' }))
+        await translationCacheDB.save(createTestTranslationCache('other-project', 'ko', { id: 'cache3', contentHash: 'h3' }))
+
+        const deleted = await translationCacheDB.deleteByProject(projectId)
+
+        expect(deleted).toBe(2)
+
+        const remaining = await translationCacheDB.getByProject(projectId)
+        expect(remaining).toHaveLength(0)
+
+        const otherRemaining = await translationCacheDB.getByProject('other-project')
+        expect(otherRemaining).toHaveLength(1)
+      })
+    })
+
+    describe('cleanupOld', () => {
+      it('应该清理7天前的过期缓存', async () => {
+        const cutoff = 7 * 24 * 60 * 60 * 1000
+
+        const oldCache = createTestTranslationCache('old', 'en', {
+          id: 'old-cache',
+          contentHash: 'old-hash',
+        })
+        const newCache = createTestTranslationCache('new', 'ja', {
+          id: 'new-cache',
+          contentHash: 'new-hash',
+        })
+
+        // 直接操作数据库以设置准确的时间戳
+        const oldCacheWithTime = {
+          ...oldCache,
+          updatedAt: Date.now() - cutoff - 10000,
+          createdAt: Date.now() - cutoff - 10000,
+        }
+        const newCacheWithTime = {
+          ...newCache,
+          updatedAt: Date.now(),
+          createdAt: Date.now(),
+        }
+
+        await db.translationCache.put(oldCacheWithTime)
+        await db.translationCache.put(newCacheWithTime)
+
+        const deleted = await translationCacheDB.cleanupOld()
+
+        expect(deleted).toBe(1)
+
+        const remainingOld = await translationCacheDB.get('old-cache')
+        const remainingNew = await translationCacheDB.get('new-cache')
+
+        expect(remainingOld).toBeUndefined()
+        expect(remainingNew).toBeDefined()
+      })
+    })
+
+    describe('缓存命中逻辑', () => {
+      it('相同内容相同语言应该命中缓存', async () => {
+        const contentHash = 'same-content-hash'
+        const cache = createTestTranslationCache(projectId, 'en', {
+          id: `${contentHash}_en`,
+          contentHash,
+          translatedContent: 'Cached translation',
+        })
+        await translationCacheDB.save(cache)
+
+        // 第一次查询
+        const hit1 = await translationCacheDB.getByHashAndLang(contentHash, 'en')
+        expect(hit1).toBeDefined()
+        expect(hit1!.translatedContent).toBe('Cached translation')
+
+        // 第二次查询（应该缓存命中）
+        const hit2 = await translationCacheDB.getByHashAndLang(contentHash, 'en')
+        expect(hit2).toBeDefined()
+        expect(hit2!.id).toBe(hit1!.id)
+      })
+
+      it('相同内容不同语言应该分别缓存', async () => {
+        const contentHash = 'same-content-hash'
+        await translationCacheDB.save(createTestTranslationCache(projectId, 'en', {
+          id: `${contentHash}_en`,
+          contentHash,
+          translatedContent: 'English version',
+        }))
+        await translationCacheDB.save(createTestTranslationCache(projectId, 'ja', {
+          id: `${contentHash}_ja`,
+          contentHash,
+          translatedContent: 'Japanese version',
+        }))
+
+        const enCache = await translationCacheDB.getByHashAndLang(contentHash, 'en')
+        const jaCache = await translationCacheDB.getByHashAndLang(contentHash, 'ja')
+
+        expect(enCache!.translatedContent).toBe('English version')
+        expect(jaCache!.translatedContent).toBe('Japanese version')
+      })
+
+      it('不同内容相同语言应该不命中缓存', async () => {
+        await translationCacheDB.save(createTestTranslationCache(projectId, 'en', {
+          id: 'hash1_en',
+          contentHash: 'hash1',
+          translatedContent: 'Version 1',
+        }))
+
+        // 内容变化后，不应该命中旧缓存
+        const miss = await translationCacheDB.getByHashAndLang('hash2', 'en')
+        expect(miss).toBeUndefined()
+      })
     })
   })
 })

@@ -270,3 +270,58 @@ export interface PRDVersion {
   description?: string;  // 版本说明
   isAuto: boolean;       // 是否自动保存
 }
+
+// ========== 翻译功能状态管理 ==========
+
+// 翻译任务阶段
+export type TranslationPhase = 
+  | 'idle'           // 空闲
+  | 'translating'    // 翻译中
+  | 'completed'      // 已完成
+  | 'error';         // 错误
+
+// 支持的语言配置
+export interface LanguageConfig {
+  code: string;        // 语言代码 (en, ja, ko 等)
+  name: string;        // 中文名称
+  nativeName: string;  // 原生名称
+  flag: string;        // 表情符号国旗
+}
+
+// 翻译任务（内存版，包含 AbortController）
+export interface TranslationTask {
+  id: string;              // 任务唯一ID: projectId_langCode
+  projectId: string;
+  langCode: string;
+  langName: string;
+  phase: TranslationPhase;
+  startTime: number;
+  progress?: number;       // 翻译进度（百分比）
+  error?: string;
+  abortController?: AbortController;
+}
+
+// 翻译任务（持久化版，不含 AbortController）
+export interface TranslationTaskPersisted {
+  id: string;              // 任务唯一ID: projectId_langCode
+  projectId: string;
+  langCode: string;
+  langName: string;
+  phase: TranslationPhase;
+  startTime: number;
+  progress?: number;
+  error?: string;
+  updatedAt: number;
+}
+
+// 翻译缓存记录
+export interface TranslationCache {
+  id: string;              // 缓存ID: hash(prdContent)_langCode
+  projectId: string;
+  langCode: string;
+  langName: string;
+  contentHash: string;     // PRD内容的hash值
+  translatedContent: string;
+  createdAt: number;
+  updatedAt: number;
+}

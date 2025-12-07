@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Copy, Check, Code, FileCode, Wand2, ChevronDown } from 'lucide-react';
+import { Copy, Check, Code, FileCode, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -132,7 +132,7 @@ export function CopyToAITools({ prdContent, projectName }: CopyToAIToolsProps) {
       setCopied(true);
       toast.success(`已复制为 ${template.name} 格式`);
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
+    } catch {
       toast.error('复制失败');
     }
   };
@@ -150,7 +150,7 @@ export function CopyToAITools({ prdContent, projectName }: CopyToAIToolsProps) {
       setCopied(true);
       toast.success('已复制到剪贴板');
       setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
+    } catch {
       toast.error('复制失败');
     }
   };

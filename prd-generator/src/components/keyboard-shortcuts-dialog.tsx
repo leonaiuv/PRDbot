@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Keyboard } from 'lucide-react';
 import {
   Dialog,
@@ -30,7 +30,10 @@ export function KeyboardShortcutsDialog({
   
   const isControlled = controlledOpen !== undefined;
   const open = isControlled ? controlledOpen : internalOpen;
-  const setOpen = isControlled ? (onOpenChange || (() => {})) : setInternalOpen;
+  const setOpen = useMemo(
+    () => (isControlled ? (onOpenChange || (() => {})) : setInternalOpen),
+    [isControlled, onOpenChange]
+  );
 
   // 监听 Ctrl+/ 快捷键
   useEffect(() => {

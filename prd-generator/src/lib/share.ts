@@ -3,7 +3,6 @@ import CryptoJS from 'crypto-js';
 
 // 分享链接版本
 const SHARE_VERSION = 'v2';
-const SHARE_PREFIX = `PRD_SHARE_${SHARE_VERSION}_`;
 
 // HMAC 签名密钥（用于防篡改）
 const HMAC_SECRET = 'prd-share-integrity-2024';

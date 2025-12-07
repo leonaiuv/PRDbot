@@ -7,6 +7,9 @@ import type {
   PRDGenerationTaskPersisted,
   QuestionMeta,
   SelectorOption,
+  TranslationTaskPersisted,
+  TranslationCache,
+  LanguageConfig,
 } from '@/types'
 
 export function generateTestId(): string {
@@ -144,3 +147,58 @@ export function createTestConversation(rounds: number): ConversationMessage[] {
 
   return messages
 }
+
+// ========== 翻译功能测试工厂函数 ==========
+
+export function createTestTranslationTask(
+  projectId: string,
+  langCode: string = 'en',
+  overrides?: Partial<TranslationTaskPersisted>
+): TranslationTaskPersisted {
+  return {
+    id: `${projectId}_${langCode}`,
+    projectId,
+    langCode,
+    langName: '英语',
+    phase: 'idle',
+    startTime: Date.now(),
+    progress: 0,
+    updatedAt: Date.now(),
+    ...overrides,
+  }
+}
+
+export function createTestTranslationCache(
+  projectId: string,
+  langCode: string = 'en',
+  overrides?: Partial<TranslationCache>
+): TranslationCache {
+  const contentHash = `hash_${Date.now()}`
+  return {
+    id: `${contentHash}_${langCode}`,
+    projectId,
+    langCode,
+    langName: '英语',
+    contentHash,
+    translatedContent: '# Translated PRD\n\nThis is translated content.',
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    ...overrides,
+  }
+}
+
+export function createTestLanguageConfig(overrides?: Partial<LanguageConfig>): LanguageConfig {
+  return {
+    code: 'en',
+    name: '英语',
+    nativeName: 'English',
+    flag: '🇺🇸',
+    ...overrides,
+  }
+}
+
+export const TEST_LANGUAGES: LanguageConfig[] = [
+  { code: 'en', name: '英语', flag: '🇺🇸', nativeName: 'English' },
+  { code: 'ja', name: '日语', flag: '🇯🇵', nativeName: '日本語' },
+  { code: 'ko', name: '韩语', flag: '🇰🇷', nativeName: '한국어' },
+]

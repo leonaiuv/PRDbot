@@ -3,9 +3,6 @@
 import { useState } from 'react';
 import { 
   Sparkles, 
-  BarChart3, 
-  Target, 
-  GitBranch, 
   Loader2, 
   ChevronDown,
   Lightbulb,
@@ -25,10 +22,8 @@ import {
   SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetTrigger,
 } from '@/components/ui/sheet';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Badge } from '@/components/ui/badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
