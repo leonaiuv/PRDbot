@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server';
+import { getModelConfig } from '@/lib/model-config';
+import { handleAIAPIError } from '@/lib/error-mapper';
 
 // AI分析类型
 type AnalysisType = 'optimize' | 'score' | 'competitor' | 'diagram';
@@ -11,13 +13,6 @@ interface AnalyzeRequest {
   customApiUrl?: string;
   customModelName?: string;
 }
-
-// API 端点配置
-const API_ENDPOINTS: Record<string, string> = {
-  deepseek: 'https://api.deepseek.com/v1/chat/completions',
-  qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-  doubao: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
-};
 
 // 允许的自定义 API 域名白名单
 const ALLOWED_CUSTOM_DOMAINS = [
@@ -93,8 +88,8 @@ function validateCustomApiUrl(url: string): { valid: boolean; error?: string } {
 
 const MODEL_NAMES: Record<string, string> = {
   deepseek: 'deepseek-chat',
-  qwen: 'qwen-plus',
-  doubao: 'doubao-pro-32k',
+  qwen: 'qwen-turbo',  // 统一使用基础版
+  doubao: 'doubao-pro-4k',  // 统一使用基础版
 };
 
 // 分析提示词
@@ -250,10 +245,11 @@ export async function POST(request: Request) {
       }
       apiUrl = customApiUrl!;
     } else {
-      apiUrl = API_ENDPOINTS[model];
-      if (!apiUrl) {
+      const config = getModelConfig(model);
+      if (!config) {
         return NextResponse.json({ error: '无效的模型配置' }, { status: 400 });
       }
+      apiUrl = config.endpoint;
     }
 
     // 确定实际使用的模型名称
@@ -264,7 +260,8 @@ export async function POST(request: Request) {
       }
       actualModelName = customModelName;
     } else {
-      actualModelName = MODEL_NAMES[model] || model;
+      const config = getModelConfig(model);
+      actualModelName = config?.defaultModel || MODEL_NAMES[model] || model;
     }
 
     const response = await fetch(apiUrl, {
@@ -285,12 +282,8 @@ export async function POST(request: Request) {
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('API Error:', errorText);
-      return NextResponse.json(
-        { error: `API请求失败: ${response.status}` },
-        { status: response.status }
-      );
+      const { errorResponse, status } = await handleAIAPIError('analyze', response);
+      return NextResponse.json(errorResponse, { status });
     }
 
     const data = await response.json();

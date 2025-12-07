@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { MermaidRenderer } from './mermaid-renderer';
 import { toast } from 'sonner';
 
 import { Button } from '@/components/ui/button';
@@ -128,7 +129,29 @@ export function AIAnalysisTools({
       setResults(prev => ({ ...prev, [type]: data.content }));
     } catch (error) {
       console.error('Analysis error:', error);
-      toast.error(error instanceof Error ? error.message : '分析失败');
+      
+      // 尝试解析结构化错误响应
+      if (error instanceof Error) {
+        let errorMessage = error.message;
+        let suggestion: string | undefined;
+        
+        try {
+          const errorData = JSON.parse(error.message);
+          if (errorData.error) {
+            errorMessage = errorData.error;
+            suggestion = errorData.suggestion;
+          }
+        } catch {
+          // 非JSON错误,使用原始消息
+        }
+        
+        toast.error(errorMessage, {
+          description: suggestion,
+          duration: 5000,
+        });
+      } else {
+        toast.error('分析失败,请检查网络连接');
+      }
     } finally {
       setLoading(prev => ({ ...prev, [type]: false }));
     }
@@ -216,9 +239,13 @@ export function AIAnalysisTools({
                 ) : results[option.type] ? (
                   <ScrollArea className="h-[calc(100vh-250px)]">
                     <div className="prose prose-sm dark:prose-invert max-w-none pr-4">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {results[option.type]}
-                      </ReactMarkdown>
+                      {option.type === 'diagram' ? (
+                        <MermaidRenderer content={results[option.type]} />
+                      ) : (
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {results[option.type]}
+                        </ReactMarkdown>
+                      )}
                     </div>
                   </ScrollArea>
                 ) : (

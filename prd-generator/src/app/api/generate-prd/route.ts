@@ -1,12 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-// AI服务提供商的API端点
-const AI_ENDPOINTS: Record<string, string> = {
-  deepseek: 'https://api.deepseek.com/v1/chat/completions',
-  qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-  doubao: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
-  custom: '',
-};
+import { getModelConfig } from '@/lib/model-config';
+import { handleAIAPIError } from '@/lib/error-mapper';
 
 // 允许的自定义 API 域名白名单
 const ALLOWED_CUSTOM_DOMAINS = [
@@ -143,13 +137,14 @@ export async function POST(request: NextRequest) {
       }
       endpoint = customApiUrl;
     } else {
-      endpoint = AI_ENDPOINTS[model];
-      if (!endpoint) {
+      const config = getModelConfig(model);
+      if (!config) {
         return NextResponse.json(
           { error: '无效的模型配置' },
           { status: 400 }
         );
       }
+      endpoint = config.endpoint;
     }
 
     // 确定实际使用的模型名称
@@ -163,7 +158,8 @@ export async function POST(request: NextRequest) {
       }
       actualModelName = customModelName;
     } else {
-      actualModelName = DEFAULT_MODELS[model] || model;
+      const config = getModelConfig(model);
+      actualModelName = config?.defaultModel || DEFAULT_MODELS[model] || model;
     }
 
     // 构建请求消息
@@ -193,12 +189,8 @@ ${conversationHistory}
     });
 
     if (!response.ok) {
-      const errorText = await response.text();
-      console.error('AI API Error:', errorText);
-      return NextResponse.json(
-        { error: `AI 服务调用失败: ${response.status}` },
-        { status: response.status }
-      );
+      const { errorResponse, status } = await handleAIAPIError('generate-prd', response);
+      return NextResponse.json(errorResponse, { status });
     }
 
     // 返回流式响应
