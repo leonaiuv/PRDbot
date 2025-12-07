@@ -65,6 +65,8 @@ export function MultiLanguagePRD({
       return;
     }
 
+    // 清理旧的翻译内容，避免显示过期结果
+    setTranslatedContent('');
     setCurrentLang(lang);
     setIsLoading(true);
     setDialogOpen(true);
@@ -85,7 +87,11 @@ export function MultiLanguagePRD({
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.error || '翻译失败');
+        // 展示更详细的错误信息，包含 provider 返回的错误
+        const errorMessage = error.providerError 
+          ? `${error.error}: ${error.providerError}` 
+          : (error.error || '翻译失败');
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();

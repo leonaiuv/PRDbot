@@ -4,9 +4,36 @@ interface TranslateRequest {
   content: string;
   targetLang: string;
   model: string;
-  apiKey: string;
+  apiKey?: string; // 可选，如果服务端配置了环境变量则可省略
   customApiUrl?: string;
   customModelName?: string;
+}
+
+// 服务端 API Key 环境变量映射（用于多用户部署场景）
+const SERVER_API_KEY_ENV: Record<string, string> = {
+  deepseek: 'DEEPSEEK_API_KEY',
+  qwen: 'QWEN_API_KEY',
+  doubao: 'DOUBAO_API_KEY',
+  custom: 'CUSTOM_API_KEY',
+};
+
+/**
+ * 获取有效的 API Key
+ * 优先级：服务端环境变量 > 客户端传递
+ * 这样可以在多用户部署时避免密钥暴露
+ */
+function getEffectiveApiKey(model: string, clientApiKey?: string): string | null {
+  // 优先使用服务端环境变量
+  const envKey = SERVER_API_KEY_ENV[model];
+  if (envKey) {
+    const serverKey = process.env[envKey];
+    if (serverKey) {
+      return serverKey;
+    }
+  }
+  
+  // 回退到客户端传递的 Key
+  return clientApiKey || null;
 }
 
 // API 端点配置
@@ -16,12 +43,18 @@ const API_ENDPOINTS: Record<string, string> = {
   doubao: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
 };
 
-// 允许的自定义 API 域名白名单
+// 允许的自定义 API 域名白名单（支持精确匹配和后缀匹配）
 const ALLOWED_CUSTOM_DOMAINS = [
+  // OpenAI 系列
   'api.openai.com',
+  'openai.azure.com',        // Azure OpenAI
+  // Anthropic
   'api.anthropic.com',
+  // 其他国际 AI 服务
   'api.cohere.ai',
   'api.mistral.ai',
+  'generativelanguage.googleapis.com', // Google AI
+  // 国内 AI 服务
   'api.moonshot.cn',
   'api.baichuan-ai.com',
   'api.minimax.chat',
@@ -29,6 +62,21 @@ const ALLOWED_CUSTOM_DOMAINS = [
   'open.bigmodel.cn',
   'aip.baidubce.com',
   'api.siliconflow.cn',
+  // 企业代理网关常见模式
+  'openrouter.ai',
+  'api.together.xyz',
+  'api.groq.com',
+  'api.fireworks.ai',
+  'api.perplexity.ai',
+  'api.replicate.com',
+];
+
+// Azure OpenAI 的特殊域名模式（支持自定义资源名）
+const AZURE_OPENAI_PATTERN = /^[a-z0-9-]+\.openai\.azure\.com$/i;
+// 常见企业内网代理的安全模式
+const ENTERPRISE_PROXY_PATTERNS = [
+  /^api\.[a-z0-9-]+\.corp\.[a-z]+$/i,  // 企业内部 API 网关
+  /^llm\.[a-z0-9-]+\.[a-z]+$/i,        // LLM 服务网关
 ];
 
 /**
@@ -73,19 +121,31 @@ function validateCustomApiUrl(url: string): { valid: boolean; error?: string } {
     }
   }
 
-  // 检查白名单
-  const isAllowed = ALLOWED_CUSTOM_DOMAINS.some(domain => 
+  // 检查静态白名单
+  const isInWhitelist = ALLOWED_CUSTOM_DOMAINS.some(domain => 
     hostname === domain || hostname.endsWith('.' + domain)
   );
 
-  if (!isAllowed) {
-    return { 
-      valid: false, 
-      error: `不在允许的 API 域名白名单中。允许的域名: ${ALLOWED_CUSTOM_DOMAINS.join(', ')}` 
-    };
+  if (isInWhitelist) {
+    return { valid: true };
   }
 
-  return { valid: true };
+  // 检查 Azure OpenAI 动态模式
+  if (AZURE_OPENAI_PATTERN.test(hostname)) {
+    return { valid: true };
+  }
+
+  // 检查企业代理模式（警告模式，仍允许通过）
+  const isEnterpriseProxy = ENTERPRISE_PROXY_PATTERNS.some(pattern => pattern.test(hostname));
+  if (isEnterpriseProxy) {
+    console.warn(`Enterprise proxy domain detected: ${hostname}`);
+    return { valid: true };
+  }
+
+  return { 
+    valid: false, 
+    error: `域名不在允许列表中: ${hostname}。支持的域名模式包括: OpenAI, Azure OpenAI (*.openai.azure.com), Anthropic, Google AI 及主流国内 AI 服务商。` 
+  };
 }
 
 const MODEL_NAMES: Record<string, string> = {
@@ -93,6 +153,111 @@ const MODEL_NAMES: Record<string, string> = {
   qwen: 'qwen-plus',
   doubao: 'doubao-pro-32k',
 };
+
+// 内容长度限制配置（字符数）
+const MAX_CONTENT_LENGTH = 30000; // 最大内容长度
+const CHUNK_SIZE = 6000;           // 分段大小（考虑中英文token比例）
+const MAX_TOKENS_PER_CHUNK = 4000; // 每段输出的max_tokens
+
+/**
+ * 将内容按Markdown标题结构智能分段
+ * 优先在二级标题处分割，保持文档结构完整性
+ */
+function splitContentIntoChunks(content: string): string[] {
+  // 如果内容较短，不需要分段
+  if (content.length <= CHUNK_SIZE) {
+    return [content];
+  }
+
+  const chunks: string[] = [];
+  const lines = content.split('\n');
+  let currentChunk = '';
+  
+  for (const line of lines) {
+    // 检查是否为标题行（## 或 ### 级别）
+    const isHeading = /^#{1,3}\s/.test(line);
+    
+    // 如果当前块加上新行会超过限制，且是在标题处，则分割
+    if (currentChunk.length + line.length > CHUNK_SIZE && isHeading && currentChunk.trim()) {
+      chunks.push(currentChunk.trim());
+      currentChunk = '';
+    }
+    
+    currentChunk += line + '\n';
+    
+    // 如果当前块已经超过限制很多，强制分割
+    if (currentChunk.length > CHUNK_SIZE * 1.5) {
+      chunks.push(currentChunk.trim());
+      currentChunk = '';
+    }
+  }
+  
+  if (currentChunk.trim()) {
+    chunks.push(currentChunk.trim());
+  }
+  
+  return chunks;
+}
+
+/**
+ * 翻译单个内容块
+ */
+async function translateChunk(
+  chunk: string,
+  targetLang: string,
+  apiUrl: string,
+  apiKey: string,
+  modelName: string,
+  chunkIndex: number,
+  totalChunks: number
+): Promise<string> {
+  const contextHint = totalChunks > 1 
+    ? `（这是文档第 ${chunkIndex + 1}/${totalChunks} 部分，请保持翻译风格一致）` 
+    : '';
+
+  const prompt = `你是一位专业的技术文档翻译专家。请将以下PRD文档翻译成${targetLang}。${contextHint}
+
+翻译要求：
+1. 保持Markdown格式不变
+2. 专业术语保持准确
+3. 保留原有的标题层级结构
+4. 代码块、变量名等技术内容保持原样
+5. 保持专业、正式的语言风格
+
+请只输出翻译结果，不要包含任何解释或说明。`;
+
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages: [
+        { role: 'system', content: prompt },
+        { role: 'user', content: chunk },
+      ],
+      temperature: 0.3,
+      max_tokens: MAX_TOKENS_PER_CHUNK,
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    let providerError = '';
+    try {
+      const errorJson = JSON.parse(errorText);
+      providerError = errorJson.error?.message || errorJson.message || errorJson.error || errorText.substring(0, 200);
+    } catch {
+      providerError = errorText.substring(0, 200);
+    }
+    throw new Error(`翻译第 ${chunkIndex + 1} 部分失败: ${providerError}`);
+  }
+
+  const data = await response.json();
+  return data.choices?.[0]?.message?.content || '';
+}
 
 export async function POST(request: Request) {
   try {
@@ -103,8 +268,24 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '内容不能为空' }, { status: 400 });
     }
 
-    if (!apiKey) {
-      return NextResponse.json({ error: '请先配置 API Key' }, { status: 400 });
+    // 检查内容长度
+    if (content.length > MAX_CONTENT_LENGTH) {
+      return NextResponse.json(
+        { 
+          error: `文档过长（${content.length} 字符），超过最大限制 ${MAX_CONTENT_LENGTH} 字符。建议分次翻译或简化文档。`,
+          contentLength: content.length,
+          maxLength: MAX_CONTENT_LENGTH
+        }, 
+        { status: 400 }
+      );
+    }
+
+    // 获取有效的 API Key（优先服务端环境变量）
+    const effectiveApiKey = getEffectiveApiKey(model, apiKey);
+    if (!effectiveApiKey) {
+      return NextResponse.json({ 
+        error: '请先配置 API Key，或联系管理员配置服务端密钥' 
+      }, { status: 400 });
     }
 
     // 确定 API URL 并校验
@@ -133,47 +314,35 @@ export async function POST(request: Request) {
       actualModelName = MODEL_NAMES[model] || model;
     }
 
-    const prompt = `你是一位专业的技术文档翻译专家。请将以下PRD文档翻译成${targetLang}。
-
-翻译要求：
-1. 保持Markdown格式不变
-2. 专业术语保持准确
-3. 保留原有的标题层级结构
-4. 代码块、变量名等技术内容保持原样
-5. 保持专业、正式的语言风格
-
-请只输出翻译结果，不要包含任何解释或说明。`;
-
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: actualModelName,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content },
-        ],
-        temperature: 0.3,
-        max_tokens: 8000,
-      }),
-    });
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      console.error('API Error:', errorText);
-      return NextResponse.json(
-        { error: `API请求失败: ${response.status}` },
-        { status: response.status }
-      );
+    // 分段翻译处理
+    const chunks = splitContentIntoChunks(content);
+    
+    if (chunks.length > 1) {
+      console.log(`Content split into ${chunks.length} chunks for translation`);
     }
 
-    const data = await response.json();
-    const translatedContent = data.choices?.[0]?.message?.content || '';
+    // 顺序翻译所有分段
+    const translatedChunks: string[] = [];
+    for (let i = 0; i < chunks.length; i++) {
+      const translatedChunk = await translateChunk(
+        chunks[i],
+        targetLang,
+        apiUrl,
+        effectiveApiKey,
+        actualModelName,
+        i,
+        chunks.length
+      );
+      translatedChunks.push(translatedChunk);
+    }
 
-    return NextResponse.json({ content: translatedContent });
+    // 合并翻译结果
+    const translatedContent = translatedChunks.join('\n\n');
+
+    return NextResponse.json({ 
+      content: translatedContent,
+      chunksUsed: chunks.length
+    });
   } catch (error) {
     console.error('Translate error:', error);
     return NextResponse.json(
