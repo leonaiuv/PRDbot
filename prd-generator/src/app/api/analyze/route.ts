@@ -9,6 +9,7 @@ interface AnalyzeRequest {
   model: string;
   apiKey: string;
   customApiUrl?: string;
+  customModelName?: string;
 }
 
 // API 端点配置
@@ -17,6 +18,78 @@ const API_ENDPOINTS: Record<string, string> = {
   qwen: 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
   doubao: 'https://ark.cn-beijing.volces.com/api/v3/chat/completions',
 };
+
+// 允许的自定义 API 域名白名单
+const ALLOWED_CUSTOM_DOMAINS = [
+  'api.openai.com',
+  'api.anthropic.com',
+  'api.cohere.ai',
+  'api.mistral.ai',
+  'api.moonshot.cn',
+  'api.baichuan-ai.com',
+  'api.minimax.chat',
+  'api.zhipuai.cn',
+  'open.bigmodel.cn',
+  'aip.baidubce.com',
+  'api.siliconflow.cn',
+];
+
+/**
+ * 校验自定义 API URL 的安全性
+ * 防止 SSRF 攻击
+ */
+function validateCustomApiUrl(url: string): { valid: boolean; error?: string } {
+  if (!url) {
+    return { valid: false, error: '自定义 API URL 不能为空' };
+  }
+
+  let parsedUrl: URL;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return { valid: false, error: '无效的 URL 格式' };
+  }
+
+  // 只允许 HTTPS 协议
+  if (parsedUrl.protocol !== 'https:') {
+    return { valid: false, error: '只允许 HTTPS 协议' };
+  }
+
+  // 禁止内网地址
+  const hostname = parsedUrl.hostname.toLowerCase();
+  const privatePatterns = [
+    /^localhost$/i,
+    /^127\./,
+    /^10\./,
+    /^172\.(1[6-9]|2[0-9]|3[0-1])\./,
+    /^192\.168\./,
+    /^0\./,
+    /^169\.254\./,
+    /^::1$/,
+    /^fc00:/i,
+    /^fe80:/i,
+  ];
+
+  for (const pattern of privatePatterns) {
+    if (pattern.test(hostname)) {
+      return { valid: false, error: '不允许访问内网地址' };
+    }
+  }
+
+  // 检查白名单
+  const isAllowed = ALLOWED_CUSTOM_DOMAINS.some(domain => 
+    hostname === domain || hostname.endsWith('.' + domain)
+  );
+
+  if (!isAllowed) {
+    return { 
+      valid: false, 
+      error: `不在允许的 API 域名白名单中。允许的域名: ${ALLOWED_CUSTOM_DOMAINS.join(', ')}` 
+    };
+  }
+
+  return { valid: true };
+}
 
 const MODEL_NAMES: Record<string, string> = {
   deepseek: 'deepseek-chat',
@@ -153,7 +226,7 @@ erDiagram
 export async function POST(request: Request) {
   try {
     const body: AnalyzeRequest = await request.json();
-    const { type, prdContent, model, apiKey, customApiUrl } = body;
+    const { type, prdContent, model, apiKey, customApiUrl, customModelName } = body;
 
     if (!prdContent) {
       return NextResponse.json({ error: 'PRD内容不能为空' }, { status: 400 });
@@ -168,11 +241,30 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: '无效的分析类型' }, { status: 400 });
     }
 
-    const apiUrl = customApiUrl || API_ENDPOINTS[model];
-    const modelName = MODEL_NAMES[model] || model;
+    // 确定 API URL 并校验
+    let apiUrl: string;
+    if (model === 'custom') {
+      const validation = validateCustomApiUrl(customApiUrl || '');
+      if (!validation.valid) {
+        return NextResponse.json({ error: validation.error }, { status: 400 });
+      }
+      apiUrl = customApiUrl!;
+    } else {
+      apiUrl = API_ENDPOINTS[model];
+      if (!apiUrl) {
+        return NextResponse.json({ error: '无效的模型配置' }, { status: 400 });
+      }
+    }
 
-    if (!apiUrl) {
-      return NextResponse.json({ error: '无效的模型配置' }, { status: 400 });
+    // 确定实际使用的模型名称
+    let actualModelName: string;
+    if (model === 'custom') {
+      if (!customModelName) {
+        return NextResponse.json({ error: '使用自定义 API 时需要指定模型名称' }, { status: 400 });
+      }
+      actualModelName = customModelName;
+    } else {
+      actualModelName = MODEL_NAMES[model] || model;
     }
 
     const response = await fetch(apiUrl, {
@@ -182,7 +274,7 @@ export async function POST(request: Request) {
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: modelName,
+        model: actualModelName,
         messages: [
           { role: 'system', content: prompt },
           { role: 'user', content: `以下是需要分析的PRD文档：\n\n${prdContent}` },

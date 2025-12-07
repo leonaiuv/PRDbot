@@ -145,12 +145,12 @@ describe('crypto.ts - API密钥加密模块', () => {
   })
 
   describe('错误处理', () => {
-    it('解密无效密文应该返回空字符串', () => {
+    it('解密无效密文应该返回原文（向后兼容未加密数据）', () => {
       const invalidCipher = 'invalid-cipher-text'
       const decrypted = decrypt(invalidCipher)
 
-      // crypto.ts中catch块返回空字符串
-      expect(decrypted).toBe('')
+      // 对于未识别的格式，返回原文以向后兼容
+      expect(decrypted).toBe(invalidCipher)
     })
 
     it('加密失败应该返回空字符串', () => {
@@ -158,6 +158,84 @@ describe('crypto.ts - API密钥加密模块', () => {
       const encrypted = encrypt(undefined as unknown as string)
 
       expect(encrypted).toBe('')
+    })
+  })
+
+  describe('V2 加密增强特性', () => {
+    it('新版加密应该使用 PRD_v2_ 前缀', () => {
+      const plainText = 'sk-test-key-123456'
+      const encrypted = encrypt(plainText)
+
+      expect(encrypted.startsWith('PRD_v2_')).toBe(true)
+    })
+
+    it('旧版加密格式应该仍然可以被识别', () => {
+      const legacyEncrypted = 'U2FsdGVkX1abcdefgh'
+      expect(isEncrypted(legacyEncrypted)).toBe(true)
+    })
+
+    it('新版加密和旧版加密都应该被识别为已加密', () => {
+      const newEncrypted = encrypt('test-key')
+      const legacyEncrypted = 'U2FsdGVkX1abcdefgh'
+
+      expect(isEncrypted(newEncrypted)).toBe(true)
+      expect(isEncrypted(legacyEncrypted)).toBe(true)
+    })
+
+    it('每次加密都应该生成不同的密文（随机 IV）', () => {
+      const plainText = 'sk-test-key-123456'
+      const encrypted1 = encrypt(plainText)
+      const encrypted2 = encrypt(plainText)
+
+      // 不同的密文（不同的 salt 和 IV）
+      expect(encrypted1).not.toBe(encrypted2)
+
+      // 但解密后应该相同
+      expect(decrypt(encrypted1)).toBe(plainText)
+      expect(decrypt(encrypted2)).toBe(plainText)
+    })
+
+    it('HMAC 验证应该检测数据篡改', () => {
+      const plainText = 'sk-test-key-123456'
+      const encrypted = encrypt(plainText)
+
+      // 篡改密文中间的字符（在 base64 部分）
+      // PRD_v2_ 是 7 个字符，篡改后面的部分
+      const tamperedEncrypted = encrypted.slice(0, 30) + 'X' + encrypted.slice(31)
+
+      // 解密篡改过的数据应该失败
+      const decrypted = decrypt(tamperedEncrypted)
+      expect(decrypted).toBe('')
+    })
+  })
+
+  describe('API Keys 混合状态处理', () => {
+    it('应该正确处理部分加密的 API Keys', () => {
+      const originalDeepseekKey = 'sk-deepseek-123'
+      const apiKeys = {
+        deepseek: encrypt(originalDeepseekKey), // 已加密
+        qwen: 'sk-qwen-456', // 未加密（将被当作明文返回）
+      }
+
+      const decrypted = decryptApiKeys(apiKeys)
+
+      expect(decrypted.deepseek).toBe(originalDeepseekKey)
+      // 未加密的密钥会被当作明文返回
+      expect(decrypted.qwen).toBe('sk-qwen-456')
+    })
+
+    it('应该过滤掉解密失败（返回空字符串）的密钥', () => {
+      const apiKeys = {
+        deepseek: '', // 空字符串
+        qwen: encrypt('sk-qwen-valid'),
+      }
+
+      const decrypted = decryptApiKeys(apiKeys)
+
+      // 空字符串不应该在结果中
+      expect(decrypted.deepseek).toBeUndefined()
+      // 有效的应该正常解密
+      expect(decrypted.qwen).toBe('sk-qwen-valid')
     })
   })
 })

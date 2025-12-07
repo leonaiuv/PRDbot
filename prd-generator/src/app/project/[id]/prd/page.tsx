@@ -332,7 +332,8 @@ export default function PRDPage() {
           conversationHistory,
           model: settings.defaultModel,
           apiKey: settings.apiKeys[settings.defaultModel],
-          customApiUrl: settings.customApiUrl
+          customApiUrl: settings.customApiUrl,
+          customModelName: settings.customModelName
         })
       });
 
@@ -460,7 +461,8 @@ ${currentProject.prdContent}
           messages,
           model: settings.defaultModel,
           apiKey: settings.apiKeys[settings.defaultModel],
-          customApiUrl: settings.customApiUrl
+          customApiUrl: settings.customApiUrl,
+          customModelName: settings.customModelName
         })
       });
 
@@ -652,6 +654,7 @@ ${currentProject.prdContent}
                   model={settings.defaultModel}
                   apiKey={settings.apiKeys[settings.defaultModel] || ''}
                   customApiUrl={settings.customApiUrl}
+                  customModelName={settings.customModelName}
                 />
               )}
               {/* 复制到AI工具 */}
@@ -668,6 +671,7 @@ ${currentProject.prdContent}
                   model={settings.defaultModel}
                   apiKey={settings.apiKeys[settings.defaultModel] || ''}
                   customApiUrl={settings.customApiUrl}
+                  customModelName={settings.customModelName}
                 />
               )}
               {/* 版本历史 */}

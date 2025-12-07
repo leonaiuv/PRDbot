@@ -113,7 +113,7 @@ const PRD_SYSTEM_PROMPT = `你是一名资深产品经理兼架构师，请根�
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { conversationHistory, model, apiKey, customApiUrl } = body;
+    const { conversationHistory, model, apiKey, customApiUrl, customModelName } = body;
 
     console.log('[generate-prd] Request received:', { model, hasApiKey: !!apiKey, hasConversation: !!conversationHistory });
 
@@ -152,6 +152,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 确定实际使用的模型名称
+    let actualModelName: string;
+    if (model === 'custom') {
+      if (!customModelName) {
+        return NextResponse.json(
+          { error: '使用自定义 API 时需要指定模型名称' },
+          { status: 400 }
+        );
+      }
+      actualModelName = customModelName;
+    } else {
+      actualModelName = DEFAULT_MODELS[model] || model;
+    }
+
     // 构建请求消息
     const requestMessages = [
       { role: 'system', content: PRD_SYSTEM_PROMPT },
@@ -170,7 +184,7 @@ ${conversationHistory}
         'Authorization': `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: DEFAULT_MODELS[model] || model,
+        model: actualModelName,
         messages: requestMessages,
         stream: true,
         temperature: 0.7,

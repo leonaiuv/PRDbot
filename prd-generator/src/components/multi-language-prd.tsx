@@ -29,6 +29,7 @@ interface MultiLanguagePRDProps {
   model: string;
   apiKey: string;
   customApiUrl?: string;
+  customModelName?: string;
 }
 
 const LANGUAGES = [
@@ -46,6 +47,7 @@ export function MultiLanguagePRD({
   model,
   apiKey,
   customApiUrl,
+  customModelName,
 }: MultiLanguagePRDProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [translatedContent, setTranslatedContent] = useState('');
@@ -77,6 +79,7 @@ export function MultiLanguagePRD({
           model,
           apiKey,
           customApiUrl,
+          customModelName,
         }),
       });
 

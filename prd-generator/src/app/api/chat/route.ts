@@ -155,7 +155,7 @@ const MAX_RETRY_COUNT = 2;
 async function callAIAndAggregate(
   endpoint: string,
   apiKey: string,
-  model: string,
+  modelName: string,
   messages: Array<{ role: string; content: string }>
 ): Promise<{ content: string; error?: string }> {
   const response = await fetch(endpoint, {
@@ -165,7 +165,7 @@ async function callAIAndAggregate(
       'Authorization': `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: DEFAULT_MODELS[model] || model,
+      model: modelName,
       messages,
       stream: true,
       temperature: 0.7,
@@ -201,7 +201,7 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    const { messages, model, apiKey, customApiUrl } = body;
+    const { messages, model, apiKey, customApiUrl, customModelName } = body;
     
     console.log('Chat API Request:', { model, hasApiKey: !!apiKey, messagesCount: messages?.length });
 
@@ -240,6 +240,20 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // 确定实际使用的模型名称
+    let actualModelName: string;
+    if (model === 'custom') {
+      if (!customModelName) {
+        return NextResponse.json(
+          { error: '使用自定义 API 时需要指定模型名称' },
+          { status: 400 }
+        );
+      }
+      actualModelName = customModelName;
+    } else {
+      actualModelName = DEFAULT_MODELS[model] || model;
+    }
+
     // 构建请求消息
     let requestMessages = [
       { role: 'system', content: SYSTEM_PROMPT },
@@ -253,7 +267,7 @@ export async function POST(request: NextRequest) {
     // 循环调用，支持校验失败后自动重试
     while (retryCount <= MAX_RETRY_COUNT) {
       // 调用AI API并聚合流式响应
-      const result = await callAIAndAggregate(endpoint, apiKey, model, requestMessages);
+      const result = await callAIAndAggregate(endpoint, apiKey, actualModelName, requestMessages);
       
       if (result.error) {
         return NextResponse.json(

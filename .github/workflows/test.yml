@@ -1,0 +1,66 @@
+name: 自动化测试
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 运行测试
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        node-version: [18.x, 20.x]
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置 Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'npm'
+          cache-dependency-path: prd-generator/package-lock.json
+      
+      - name: 安装依赖
+        working-directory: prd-generator
+        run: npm ci
+      
+      - name: 运行 Lint 检查
+        working-directory: prd-generator
+        run: npm run lint
+      
+      - name: 运行测试（带覆盖率）
+        working-directory: prd-generator
+        run: npm run test:ci
+      
+      - name: 上传覆盖率报告
+        uses: codecov/codecov-action@v4
+        if: matrix.node-version == '20.x'
+        with:
+          files: ./prd-generator/coverage/lcov.info
+          flags: unittests
+          name: prd-generator-coverage
+          fail_ci_if_error: false
+      
+      - name: 生成测试报告摘要
+        if: always()
+        working-directory: prd-generator
+        run: |
+          echo "## 测试结果 🧪" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f coverage/coverage-summary.json ]; then
+            echo "### 覆盖率统计" >> $GITHUB_STEP_SUMMARY
+            echo '```json' >> $GITHUB_STEP_SUMMARY
+            cat coverage/coverage-summary.json >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: 构建检查
+        working-directory: prd-generator
+        run: npm run build

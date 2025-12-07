@@ -43,6 +43,7 @@ interface AIAnalysisToolsProps {
   model: string;
   apiKey: string;
   customApiUrl?: string;
+  customModelName?: string;
 }
 
 const ANALYSIS_OPTIONS = [
@@ -76,7 +77,8 @@ export function AIAnalysisTools({
   prdContent, 
   model, 
   apiKey, 
-  customApiUrl 
+  customApiUrl,
+  customModelName 
 }: AIAnalysisToolsProps) {
   const [isOpen, setIsOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<AnalysisType>('optimize');
@@ -118,6 +120,7 @@ export function AIAnalysisTools({
           model,
           apiKey,
           customApiUrl,
+          customModelName,
         }),
       });
 

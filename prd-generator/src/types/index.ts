@@ -105,6 +105,7 @@ export interface Settings {
   apiKeys: ApiKeyConfig;
   defaultModel: string;
   customApiUrl?: string;
+  customModelName?: string; // 自定义模型名称（如 gpt-4, claude-3 等）
   exportPreferences: ExportPreferences;
 }
 

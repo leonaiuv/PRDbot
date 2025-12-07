@@ -1,0 +1,65 @@
+name: PR 测试检查
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  test-validation:
+    name: PR 测试验证
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: prd-generator/package-lock.json
+      
+      - name: 安装依赖
+        working-directory: prd-generator
+        run: npm ci
+      
+      - name: 运行测试
+        working-directory: prd-generator
+        run: npm run test:ci
+      
+      - name: 检查覆盖率阈值
+        working-directory: prd-generator
+        run: |
+          echo "检查测试覆盖率是否达到 80% 阈值..."
+          if [ -f coverage/coverage-summary.json ]; then
+            echo "## 覆盖率报告 📊" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "### 各模块覆盖率" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            cat coverage/coverage-summary.json | jq '.total' >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: 检查是否有新的测试文件
+        run: |
+          FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD | grep -E '\.test\.(ts|tsx)$' || true)
+          if [ -n "$FILES" ]; then
+            echo "## ✅ 检测到新增测试文件" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "$FILES" >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+          fi
+      
+      - name: 评论 PR（如果测试失败）
+        if: failure()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: '⚠️ 测试失败，请检查并修复后再提交。\n\n运行 `npm test` 查看详细错误。'
+            })

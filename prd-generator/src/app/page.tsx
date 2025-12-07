@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Search, Settings, FileText } from 'lucide-react';
 import Link from 'next/link';
 
@@ -15,13 +15,21 @@ import { ProjectTagFilter } from '@/components/project-tag-selector';
 import { useProjectStore } from '@/store';
 import type { ProjectTagId } from '@/types';
 
+// 使用 useSyncExternalStore 处理 SSR hydration
+const useIsMounted = () => {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+};
+
 export default function Home() {
   const { projects, isLoading, searchKeyword, loadProjects, setSearchKeyword } = useProjectStore();
-  const [mounted, setMounted] = useState(false);
+  const mounted = useIsMounted();
   const [selectedTags, setSelectedTags] = useState<ProjectTagId[]>([]);
 
   useEffect(() => {
-    setMounted(true);
     loadProjects();
   }, [loadProjects]);
 

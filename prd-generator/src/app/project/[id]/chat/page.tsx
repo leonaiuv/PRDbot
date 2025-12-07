@@ -258,7 +258,8 @@ export default function ChatPage() {
           messages,
           model: settings.defaultModel,
           apiKey: settings.apiKeys[settings.defaultModel],
-          customApiUrl: settings.customApiUrl
+          customApiUrl: settings.customApiUrl,
+          customModelName: settings.customModelName
         }),
         signal: abortController.signal, // P1: 传递 signal 以支持取消
       });

@@ -1,0 +1,12 @@
+{
+  "jest.autoRun": {
+    "watch": true,
+    "onStartup": ["all-tests"]
+  },
+  "jest.showCoverageOnLoad": true,
+  "jest.runMode": "watch",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": true
+  },
+  "testing.automaticallyOpenPeekView": "failureInVisibleDocument"
+}

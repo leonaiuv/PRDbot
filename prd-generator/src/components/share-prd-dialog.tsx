@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Share2, Link, Copy, Check, Clock, Lock, AlertTriangle, Info } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -39,13 +39,10 @@ export function SharePRDDialog({ prdContent, projectName }: SharePRDDialogProps)
   const [usePassword, setUsePassword] = useState(false);
   const [password, setPassword] = useState('');
   const [expiresIn, setExpiresIn] = useState<string>('never');
-  const [shareability, setShareability] = useState<ReturnType<typeof isContentShareable> | null>(null);
 
-  // 检查内容是否可分享
-  useEffect(() => {
-    if (prdContent) {
-      setShareability(isContentShareable(prdContent));
-    }
+  // 使用 useMemo 计算派生状态，避免在 useEffect 中 setState
+  const shareability = useMemo(() => {
+    return prdContent ? isContentShareable(prdContent) : null;
   }, [prdContent]);
 
   // 生成分享链接

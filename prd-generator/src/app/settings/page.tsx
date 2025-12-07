@@ -31,6 +31,7 @@ export default function SettingsPage() {
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
   const [customUrl, setCustomUrl] = useState('');
+  const [customModelName, setCustomModelName] = useState('');
   const [defaultModel, setDefaultModel] = useState('deepseek');
   const [isSaving, setIsSaving] = useState(false);
 
@@ -43,6 +44,7 @@ export default function SettingsPage() {
     if (settings) {
       setApiKeys(settings.apiKeys || {});
       setCustomUrl(settings.customApiUrl || '');
+      setCustomModelName(settings.customModelName || '');
       setDefaultModel(settings.defaultModel || 'deepseek');
     }
   }, [settings]);
@@ -55,6 +57,7 @@ export default function SettingsPage() {
         apiKeys,
         defaultModel,
         customApiUrl: customUrl,
+        customModelName,
       });
 
       toast.success('设置已保存');
@@ -167,19 +170,36 @@ export default function SettingsPage() {
               <Separator className="my-4" />
 
               {/* 自定义 API */}
-              <div className="space-y-2">
-                <Label htmlFor="custom-url" className="text-sm">自定义 API URL（可选）</Label>
-                <Input
-                  id="custom-url"
-                  type="url"
-                  value={customUrl}
-                  onChange={(e) => setCustomUrl(e.target.value)}
-                  placeholder="https://your-api-endpoint.com/v1/chat/completions"
-                  className="h-10 sm:h-11 text-sm"
-                />
-                <p className="text-[10px] sm:text-xs text-muted-foreground">
-                  如果你有自己的 API 代理或私有部署，可以在这里配置
-                </p>
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="custom-url" className="text-sm">自定义 API URL（可选）</Label>
+                  <Input
+                    id="custom-url"
+                    type="url"
+                    value={customUrl}
+                    onChange={(e) => setCustomUrl(e.target.value)}
+                    placeholder="https://your-api-endpoint.com/v1/chat/completions"
+                    className="h-10 sm:h-11 text-sm"
+                  />
+                  <p className="text-[10px] sm:text-xs text-muted-foreground">
+                    如果你有自己的 API 代理或私有部署，可以在这里配置
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="custom-model-name" className="text-sm">自定义模型名称</Label>
+                  <Input
+                    id="custom-model-name"
+                    type="text"
+                    value={customModelName}
+                    onChange={(e) => setCustomModelName(e.target.value)}
+                    placeholder="如 gpt-4, gpt-3.5-turbo, claude-3-opus 等"
+                    className="h-10 sm:h-11 text-sm"
+                  />
+                  <p className="text-[10px] sm:text-xs text-muted-foreground">
+                    使用自定义 API 时，需要填写真实的模型名称（必填）
+                  </p>
+                </div>
               </div>
 
               {defaultModel === 'custom' && (
@@ -282,6 +302,17 @@ export default function SettingsPage() {
               </ToggleGroup>
             </CardContent>
           </Card>
+
+          {/* 自定义模型配置警告 */}
+          {defaultModel === 'custom' && (!customUrl || !customModelName) && (
+            <Alert variant="destructive" className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/30">
+              <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <AlertTitle className="text-amber-800 dark:text-amber-300">注意</AlertTitle>
+              <AlertDescription className="text-amber-700 dark:text-amber-400">
+                使用自定义 API 时，需要同时配置 API URL 和模型名称。
+              </AlertDescription>
+            </Alert>
+          )}
 
           {/* API Key 未配置警告 */}
           {!apiKeys[defaultModel] && defaultModel !== 'custom' && (

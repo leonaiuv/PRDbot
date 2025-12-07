@@ -1,0 +1,37 @@
+name: 定时测试
+
+on:
+  schedule:
+    # 每天 UTC 02:00 (北京时间 10:00) 运行
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: 定时回归测试
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+      
+      - name: 设置 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20.x'
+          cache: 'npm'
+          cache-dependency-path: prd-generator/package-lock.json
+      
+      - name: 安装依赖
+        working-directory: prd-generator
+        run: npm ci
+      
+      - name: 运行完整测试套件
+        working-directory: prd-generator
+        run: npm run test:ci
+      
+      - name: 测试失败通知
+        if: failure()
+        run: |
+          echo "⚠️ 定时测试失败！" >> $GITHUB_STEP_SUMMARY
+          echo "请检查测试日志并修复问题。" >> $GITHUB_STEP_SUMMARY

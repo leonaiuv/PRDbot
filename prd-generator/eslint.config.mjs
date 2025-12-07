@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Jest config uses CommonJS
+    "jest.config.js",
+    "jest.setup.js",
+    // Coverage reports
+    "coverage/**",
   ]),
 ]);
 

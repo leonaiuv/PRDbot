@@ -87,9 +87,13 @@ export const settingsDB = {
   async get(): Promise<Settings | undefined> {
     const settings = await db.settings.get('global');
     if (settings && settings.apiKeys) {
-      // 检查是否已加密，如果是则解密
-      const firstKey = Object.values(settings.apiKeys)[0];
-      if (firstKey && isEncrypted(firstKey)) {
+      // 检查每个 API Key 是否已加密，并分别处理
+      const hasAnyEncrypted = Object.values(settings.apiKeys).some(
+        key => key && isEncrypted(key)
+      );
+      
+      if (hasAnyEncrypted) {
+        // 解密所有 API Keys
         settings.apiKeys = decryptApiKeys(settings.apiKeys);
       }
     }

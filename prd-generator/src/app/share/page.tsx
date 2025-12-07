@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, Suspense } from 'react';
+import { useEffect, useState, Suspense, useSyncExternalStore, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { FileText, Lock, AlertCircle, Clock, ArrowLeft, Download, Copy, Check } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
@@ -22,44 +22,53 @@ import {
 } from '@/lib/share';
 import { exportMarkdown } from '@/lib/export';
 
+// 使用 useSyncExternalStore 处理 SSR hydration
+const useIsMounted = () => {
+  return useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false
+  );
+};
+
 function SharePageContent() {
   const searchParams = useSearchParams();
-  const [shareData, setShareData] = useState<ShareData | null>(null);
-  const [decryptedContent, setDecryptedContent] = useState<string | null>(null);
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [isExpired, setIsExpired] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    setMounted(true);
+  const mounted = useIsMounted();
+  
+  // 使用 useMemo 计算初始状态，避免在 useEffect 中调用 setState
+  const initialState = useMemo(() => {
     const data = searchParams.get('d');
     
     if (!data) {
-      setError('无效的分享链接');
-      return;
+      return { error: '无效的分享链接', shareData: null, isExpired: false, decryptedContent: null };
     }
 
     const parsed = parseShareData(data);
     if (!parsed) {
-      setError('无法解析分享内容');
-      return;
+      return { error: '无法解析分享内容', shareData: null, isExpired: false, decryptedContent: null };
     }
 
     if (isShareExpired(parsed)) {
-      setIsExpired(true);
-      setShareData(parsed);
-      return;
+      return { error: null, shareData: parsed, isExpired: true, decryptedContent: null };
     }
-
-    setShareData(parsed);
 
     // 如果没有加密，直接显示内容
-    if (!parsed.isEncrypted) {
-      setDecryptedContent(parsed.content);
-    }
+    const content = !parsed.isEncrypted ? parsed.content : null;
+    return { error: null, shareData: parsed, isExpired: false, decryptedContent: content };
   }, [searchParams]);
+
+  const [shareData, setShareData] = useState<ShareData | null>(initialState.shareData);
+  const [decryptedContent, setDecryptedContent] = useState<string | null>(initialState.decryptedContent);
+  const [password, setPassword] = useState('');
+  const [error] = useState<string | null>(initialState.error);
+  const [isExpired] = useState(initialState.isExpired);
+  const [copied, setCopied] = useState(false);
+
+  // 当 searchParams 变化时更新状态（重新计算）
+  useEffect(() => {
+    setShareData(initialState.shareData);
+    setDecryptedContent(initialState.decryptedContent);
+  }, [initialState]);
 
   const handleDecrypt = () => {
     if (!shareData || !password) return;
