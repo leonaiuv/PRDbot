@@ -208,40 +208,40 @@ P->>API : 再次发送合并后的用户选择
 
 ```mermaid
 classDiagram
-class ChatStore {
-+tasks : Record<string, ChatGenerationTask>
-+getTask(projectId) : ChatGenerationTask
-+startGeneration(projectId, retryParams?)
-+setGenerationPhase(projectId, phase)
-+advanceStep(projectId)
-+setStepByIndex(projectId, index)
-+setPendingSelectors(projectId, selectors, meta?)
-+completeGeneration(projectId)
-+cancelGeneration(projectId)
-+setGenerationError(projectId, error)
-+updateElapsedTime(projectId)
-+resetGeneration(projectId)
-+abortAndReset(projectId)
-+getAbortSignal(projectId) : AbortSignal|undefined
-+clearTask(projectId)
-}
-class ChatGenerationTask {
-+projectId : string
-+isStreaming : boolean
-+streamContent : string
-+error : string|null
-+generationPhase : GenerationPhase
-+currentStep : GenerationStep
-+stepIndex : number
-+startTime : number
-+elapsedTime : number
-+pendingSelectors : SelectorData[]
-+questionMeta : QuestionMeta|null
-+canCancel : boolean
-+abortController : AbortController|null
-+retryParams : {content}|null
-}
-ChatStore --> ChatGenerationTask : "按projectId隔离"
+    class ChatStore {
+        +tasks : Record<string, ChatGenerationTask>
+        +getTask(projectId) : ChatGenerationTask
+        +startGeneration(projectId, retryParams?)
+        +setGenerationPhase(projectId, phase)
+        +advanceStep(projectId)
+        +setStepByIndex(projectId, index)
+        +setPendingSelectors(projectId, selectors, meta?)
+        +completeGeneration(projectId)
+        +cancelGeneration(projectId)
+        +setGenerationError(projectId, error)
+        +updateElapsedTime(projectId)
+        +resetGeneration(projectId)
+        +abortAndReset(projectId)
+        +getAbortSignal(projectId) : AbortSignal|undefined
+        +clearTask(projectId)
+    }
+    class ChatGenerationTask {
+        +projectId : string
+        +isStreaming : boolean
+        +streamContent : string
+        +error : string|null
+        +generationPhase : GenerationPhase
+        +currentStep : GenerationStep
+        +stepIndex : number
+        +startTime : number
+        +elapsedTime : number
+        +pendingSelectors : SelectorData[]
+        +questionMeta : QuestionMeta|null
+        +canCancel : boolean
+        +abortController : AbortController|null
+        +retryParams : string|null
+    }
+    ChatStore --> ChatGenerationTask : "按projectId隔离"
 ```
 
 图表来源

@@ -155,6 +155,7 @@ end
   - meta.phase按进度推进：basic(0-30%)关注背景/目标；feature(30-60%)关注功能/交互；technical(60-85%)关注实现方式/架构倾向；confirmation(85-100%)收尾确认
   - progress根据完成度单调递增
   - 当核心功能≥3、目标用户明确、技术/实现路径已有倾向时，设置canGeneratePRD: true，并加入一个收尾确认问题
+- **新增规则**：禁止重复提问，要求AI仔细阅读对话历史，用户已回答过的问题绝对不能再次询问
 
 **章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L91-L214)
