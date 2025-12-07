@@ -7,6 +7,7 @@ import Link from 'next/link';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Skeleton } from '@/components/ui/skeleton';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProjectCard } from '@/components/project-card';
 import { NewProjectDialog } from '@/components/new-project-dialog';
 import { useProjectStore } from '@/store';
@@ -31,24 +32,30 @@ export default function Home() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col">
-      {/* 导航栏 */}
-      <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex h-14 sm:h-16 items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-3">
-            <FileText className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
-            <span className="font-semibold text-base sm:text-lg">PRD 生成工具</span>
+    <TooltipProvider>
+      <div className="min-h-screen flex flex-col">
+        {/* 导航栏 */}
+        <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 flex h-14 sm:h-16 items-center justify-between">
+            <div className="flex items-center gap-2 sm:gap-3">
+              <FileText className="h-5 w-5 sm:h-6 sm:w-6 text-primary" />
+              <span className="font-semibold text-base sm:text-lg">PRD 生成工具</span>
+            </div>
+            <div className="flex items-center gap-1 sm:gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href="/settings">
+                    <Button variant="ghost" size="icon" className="h-9 w-9 sm:h-10 sm:w-10 touch-feedback">
+                      <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
+                    </Button>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>设置</TooltipContent>
+              </Tooltip>
+              <NewProjectDialog />
+            </div>
           </div>
-          <div className="flex items-center gap-1 sm:gap-2">
-            <Link href="/settings">
-              <Button variant="ghost" size="icon" className="h-9 w-9 sm:h-10 sm:w-10 touch-feedback">
-                <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
-              </Button>
-            </Link>
-            <NewProjectDialog />
-          </div>
-        </div>
-      </header>
+        </header>
 
       {/* 主内容 */}
       <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1">
@@ -101,9 +108,10 @@ export default function Home() {
           </div>
         )}
       </main>
-      
+
       {/* 底部安全区域 */}
       <div className="safe-area-inset" />
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

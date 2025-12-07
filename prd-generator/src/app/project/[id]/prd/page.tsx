@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, Construction, FileText, AlertCircle, RefreshCcw } from 'lucide-react';
+import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, Construction, FileText, AlertCircle, RefreshCcw, Bot, User } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -15,6 +15,9 @@ import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Separator } from '@/components/ui/separator';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -513,75 +516,88 @@ ${currentProject.prdContent}
   const prdContent = isGenerating ? prdTaskContent : currentProject.prdContent;
 
   return (
-    <div className="h-screen flex flex-col">
-      {/* 顶部导航 */}
-      <header className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container px-3 sm:px-4 md:px-6 flex h-12 sm:h-14 items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
-            <Link href="/">
-              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0 touch-feedback">
-                <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
-              </Button>
-            </Link>
-            <h1 className="font-semibold text-sm sm:text-base truncate">
-              {currentProject.name}
-            </h1>
+    <TooltipProvider>
+      <div className="h-screen flex flex-col">
+        {/* 顶部导航 */}
+        <header className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="container px-3 sm:px-4 md:px-6 flex h-12 sm:h-14 items-center justify-between">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href="/">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0 touch-feedback">
+                      <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
+                    </Button>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>返回首页</TooltipContent>
+              </Tooltip>
+              <h1 className="font-semibold text-sm sm:text-base truncate">
+                {currentProject.name}
+              </h1>
+            </div>
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button variant="outline" size="sm" className="h-8 sm:h-9 text-xs sm:text-sm px-2 sm:px-3 touch-feedback">
+                        <Download className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+                        <span className="hidden xs:inline">导出</span>
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onClick={() => handleExport('md')}>
+                        Markdown (.md)
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled className="opacity-50 cursor-not-allowed">
+                        <Construction className="mr-2 h-4 w-4" />
+                        PDF (.pdf) - 开发中
+                      </DropdownMenuItem>
+                      <DropdownMenuItem disabled className="opacity-50 cursor-not-allowed">
+                        <Construction className="mr-2 h-4 w-4" />
+                        Word (.docx) - 开发中
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </TooltipTrigger>
+                <TooltipContent>导出 PRD 文档</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href="/settings">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 touch-feedback">
+                      <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
+                    </Button>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>设置</TooltipContent>
+              </Tooltip>
+            </div>
           </div>
-          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" size="sm" className="h-8 sm:h-9 text-xs sm:text-sm px-2 sm:px-3 touch-feedback">
-                  <Download className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
-                  <span className="hidden xs:inline">导出</span>
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onClick={() => handleExport('md')}>
-                  Markdown (.md)
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled className="opacity-50 cursor-not-allowed">
-                  <Construction className="mr-2 h-4 w-4" />
-                  PDF (.pdf) - 开发中
-                </DropdownMenuItem>
-                <DropdownMenuItem disabled className="opacity-50 cursor-not-allowed">
-                  <Construction className="mr-2 h-4 w-4" />
-                  Word (.docx) - 开发中
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-            <Link href="/settings">
-              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 touch-feedback">
-                <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </header>
+        </header>
 
       {/* 移动端Tab切换 */}
       <div className="md:hidden border-b bg-background/95 backdrop-blur">
-        <div className="flex">
-          <button
-            onClick={() => setMobileTab('chat')}
-            className={`flex-1 py-3 text-sm font-medium transition-all touch-feedback ${
-              mobileTab === 'chat'
-                ? 'border-b-2 border-primary text-primary bg-primary/5'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
+        <ToggleGroup
+          type="single"
+          value={mobileTab}
+          onValueChange={(value) => value && setMobileTab(value as 'chat' | 'prd')}
+          className="w-full justify-stretch"
+        >
+          <ToggleGroupItem
+            value="chat"
+            className="flex-1 py-3 text-sm font-medium data-[state=on]:bg-primary/5 data-[state=on]:text-primary rounded-none border-b-2 border-transparent data-[state=on]:border-primary"
           >
             对话区
-          </button>
-          <button
-            onClick={() => setMobileTab('prd')}
-            className={`flex-1 py-3 text-sm font-medium transition-all touch-feedback ${
-              mobileTab === 'prd'
-                ? 'border-b-2 border-primary text-primary bg-primary/5'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
+          </ToggleGroupItem>
+          <ToggleGroupItem
+            value="prd"
+            className="flex-1 py-3 text-sm font-medium data-[state=on]:bg-primary/5 data-[state=on]:text-primary rounded-none border-b-2 border-transparent data-[state=on]:border-primary"
           >
             PRD 文档
-          </button>
-        </div>
+          </ToggleGroupItem>
+        </ToggleGroup>
       </div>
 
       {/* 主内容区域 - 左右分栏 */}
@@ -601,22 +617,29 @@ ${currentProject.prdContent}
                   key={message.id}
                   className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                 >
-                  <div
-                    className={`max-w-[90%] rounded-xl p-2.5 sm:p-3 text-sm transition-all ${
-                      message.role === 'user'
-                        ? 'bg-primary text-primary-foreground'
-                        : 'bg-muted'
-                    }`}
-                  >
-                    {message.role === 'assistant' ? (
-                      <div className="prose prose-sm dark:prose-invert max-w-none">
-                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                          {message.content.slice(0, 500) + (message.content.length > 500 ? '...' : '')}
-                        </ReactMarkdown>
-                      </div>
-                    ) : (
-                      <p className="whitespace-pre-wrap">{message.content}</p>
-                    )}
+                  <div className={`flex items-start gap-2 max-w-[90%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                    <Avatar className="h-6 w-6 flex-shrink-0">
+                      <AvatarFallback className={message.role === 'user' ? 'bg-primary text-primary-foreground text-xs' : 'bg-primary/10 text-primary text-xs'}>
+                        {message.role === 'user' ? <User className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div
+                      className={`rounded-xl p-2.5 sm:p-3 text-sm transition-all ${
+                        message.role === 'user'
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-muted'
+                      }`}
+                    >
+                      {message.role === 'assistant' ? (
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                            {message.content.slice(0, 500) + (message.content.length > 500 ? '...' : '')}
+                          </ReactMarkdown>
+                        </div>
+                      ) : (
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -693,25 +716,22 @@ ${currentProject.prdContent}
                 </span>
               )}
               <div className="flex items-center gap-1">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setEditMode(!editMode)}
+                <ToggleGroup
+                  type="single"
+                  value={editMode ? 'edit' : 'preview'}
+                  onValueChange={(value) => value && setEditMode(value === 'edit')}
                   disabled={isGenerating}
-                  className="h-8 text-xs sm:text-sm touch-feedback"
+                  className="h-8"
                 >
-                  {editMode ? (
-                    <>
-                      <Eye className="mr-1 h-3 w-3 sm:h-4 sm:w-4" />
-                      预览
-                    </>
-                  ) : (
-                    <>
-                      <Edit className="mr-1 h-3 w-3 sm:h-4 sm:w-4" />
-                      编辑
-                    </>
-                  )}
-                </Button>
+                  <ToggleGroupItem value="preview" className="h-8 text-xs sm:text-sm px-2 sm:px-3">
+                    <Eye className="mr-1 h-3 w-3 sm:h-4 sm:w-4" />
+                    预览
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="edit" className="h-8 text-xs sm:text-sm px-2 sm:px-3">
+                    <Edit className="mr-1 h-3 w-3 sm:h-4 sm:w-4" />
+                    编辑
+                  </ToggleGroupItem>
+                </ToggleGroup>
                 {!currentProject.prdContent && !isGenerating && (
                   <Button size="sm" onClick={generatePRD} className="h-8 text-xs sm:text-sm touch-feedback">
                     生成 PRD
@@ -826,6 +846,7 @@ ${currentProject.prdContent}
           </div>
         </div>
       </div>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }

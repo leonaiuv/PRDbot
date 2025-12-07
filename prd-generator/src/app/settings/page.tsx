@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Eye, EyeOff, Save, Loader2 } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Save, Loader2, AlertCircle } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
 
@@ -17,6 +17,8 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
 import { useSettingsStore } from '@/store';
 import { AI_MODELS } from '@/types';
 
@@ -237,6 +239,17 @@ export default function SettingsPage() {
             </CardContent>
           </Card>
 
+          {/* API Key 未配置警告 */}
+          {!apiKeys[defaultModel] && defaultModel !== 'custom' && (
+            <Alert variant="destructive" className="border-amber-500/50 bg-amber-50 dark:bg-amber-950/30">
+              <AlertCircle className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+              <AlertTitle className="text-amber-800 dark:text-amber-300">注意</AlertTitle>
+              <AlertDescription className="text-amber-700 dark:text-amber-400">
+                您尚未配置 {AI_MODELS.find(m => m.id === defaultModel)?.name} 的 API Key，请先配置后再使用。
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* 保存按钮 */}
           <div className="sticky bottom-6 pt-4">
             <Button 
@@ -259,40 +272,42 @@ export default function SettingsPage() {
             </Button>
           </div>
 
-          {/* 帮助信息 */}
-          <Card className="shadow-sm border-0 bg-background">
-            <CardHeader className="pb-4">
-              <CardTitle className="text-base sm:text-lg flex items-center gap-2">
-                <span className="w-1 h-5 bg-blue-500 rounded-full"></span>
-                获取 API Key
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4 text-xs sm:text-sm text-muted-foreground">
-              <div className="grid gap-3">
-                <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                  <div className="w-2 h-2 rounded-full bg-green-500 mt-1.5 flex-shrink-0"></div>
-                  <div>
-                    <strong className="text-foreground">DeepSeek</strong>
-                    <p className="mt-0.5">访问 <a href="https://platform.deepseek.com" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80 transition-colors">platform.deepseek.com</a> 注册并获取 API Key</p>
+          {/* 帮助信息 - 使用 Accordion 可折叠 */}
+          <Accordion type="single" collapsible className="w-full">
+            <AccordionItem value="api-help" className="border rounded-lg shadow-sm bg-background px-4">
+              <AccordionTrigger className="text-base sm:text-lg font-semibold hover:no-underline">
+                <div className="flex items-center gap-2">
+                  <span className="w-1 h-5 bg-blue-500 rounded-full"></span>
+                  获取 API Key
+                </div>
+              </AccordionTrigger>
+              <AccordionContent className="space-y-4 text-xs sm:text-sm text-muted-foreground pb-4">
+                <div className="grid gap-3">
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                    <div className="w-2 h-2 rounded-full bg-green-500 mt-1.5 flex-shrink-0"></div>
+                    <div>
+                      <strong className="text-foreground">DeepSeek</strong>
+                      <p className="mt-0.5">访问 <a href="https://platform.deepseek.com" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80 transition-colors">platform.deepseek.com</a> 注册并获取 API Key</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                    <div className="w-2 h-2 rounded-full bg-purple-500 mt-1.5 flex-shrink-0"></div>
+                    <div>
+                      <strong className="text-foreground">Qwen（通义千问）</strong>
+                      <p className="mt-0.5">访问 <a href="https://dashscope.console.aliyun.com" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80 transition-colors">阿里云 DashScope</a> 开通服务</p>
+                    </div>
+                  </div>
+                  <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
+                    <div className="w-2 h-2 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
+                    <div>
+                      <strong className="text-foreground">Doubao（豆包）</strong>
+                      <p className="mt-0.5">访问 <a href="https://www.volcengine.com/product/doubao" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80 transition-colors">火山引擎</a> 开通服务</p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                  <div className="w-2 h-2 rounded-full bg-purple-500 mt-1.5 flex-shrink-0"></div>
-                  <div>
-                    <strong className="text-foreground">Qwen（通义千问）</strong>
-                    <p className="mt-0.5">访问 <a href="https://dashscope.console.aliyun.com" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80 transition-colors">阿里云 DashScope</a> 开通服务</p>
-                  </div>
-                </div>
-                <div className="flex items-start gap-3 p-3 rounded-lg bg-muted/50">
-                  <div className="w-2 h-2 rounded-full bg-orange-500 mt-1.5 flex-shrink-0"></div>
-                  <div>
-                    <strong className="text-foreground">Doubao（豆包）</strong>
-                    <p className="mt-0.5">访问 <a href="https://www.volcengine.com/product/doubao" target="_blank" rel="noopener noreferrer" className="text-primary underline underline-offset-2 hover:text-primary/80 transition-colors">火山引擎</a> 开通服务</p>
-                  </div>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
         </div>
       </main>
       

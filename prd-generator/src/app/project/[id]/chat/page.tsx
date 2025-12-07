@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { ArrowLeft, Settings, Send, Loader2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { ArrowLeft, Settings, Send, Loader2, Sparkles, CheckCircle2, Bot, User } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -12,6 +12,8 @@ import remarkGfm from 'remark-gfm';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { SmartSelector, SelectedAnswer } from '@/components/smart-selector';
 import { SelectorSkeleton } from '@/components/selector-skeleton';
 import { GeneratingIndicator } from '@/components/generating-indicator';
@@ -572,39 +574,55 @@ export default function ChatPage() {
   }
 
   return (
-    <div className="h-screen flex flex-col">
-      {/* 顶部导航 */}
-      <header className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-        <div className="container px-3 sm:px-6 flex h-12 sm:h-14 items-center justify-between">
-          <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
-            <Link href="/">
-              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0 touch-feedback">
-                <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
-              </Button>
-            </Link>
-            <h1 className="font-semibold text-sm sm:text-base truncate">
-              {currentProject.name}
-            </h1>
+    <TooltipProvider>
+      <div className="h-screen flex flex-col">
+        {/* 顶部导航 */}
+        <header className="flex-shrink-0 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+          <div className="container px-3 sm:px-6 flex h-12 sm:h-14 items-center justify-between">
+            <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href="/">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 flex-shrink-0 touch-feedback">
+                      <ArrowLeft className="h-4 w-4 sm:h-5 sm:w-5" />
+                    </Button>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>返回首页</TooltipContent>
+              </Tooltip>
+              <h1 className="font-semibold text-sm sm:text-base truncate">
+                {currentProject.name}
+              </h1>
+            </div>
+            <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleGeneratePRD}
+                    disabled={currentProject.conversation.length < 4}
+                    className="h-8 sm:h-9 text-xs sm:text-sm px-2 sm:px-3 touch-feedback"
+                  >
+                    <Sparkles className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
+                    <span className="hidden xs:inline">生成 </span>PRD
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>基于对话生成 PRD 文档</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Link href="/settings">
+                    <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 touch-feedback">
+                      <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
+                    </Button>
+                  </Link>
+                </TooltipTrigger>
+                <TooltipContent>设置</TooltipContent>
+              </Tooltip>
+            </div>
           </div>
-          <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
-            <Button
-              variant="default"
-              size="sm"
-              onClick={handleGeneratePRD}
-              disabled={currentProject.conversation.length < 4}
-              className="h-8 sm:h-9 text-xs sm:text-sm px-2 sm:px-3 touch-feedback"
-            >
-              <Sparkles className="mr-1 sm:mr-2 h-3 w-3 sm:h-4 sm:w-4" />
-              <span className="hidden xs:inline">生成 </span>PRD
-            </Button>
-            <Link href="/settings">
-              <Button variant="ghost" size="icon" className="h-8 w-8 sm:h-9 sm:w-9 touch-feedback">
-                <Settings className="h-4 w-4 sm:h-5 sm:w-5" />
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </header>
+        </header>
 
       {/* 对话区域 */}
       <ScrollArea className="flex-1 custom-scrollbar" ref={scrollRef}>
@@ -622,22 +640,29 @@ export default function ChatPage() {
                 key={message.id}
                 className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
-                <div
-                  className={`max-w-[90%] sm:max-w-[85%] rounded-xl sm:rounded-lg p-3 sm:p-4 transition-all ${
-                    message.role === 'user'
-                      ? 'bg-primary text-primary-foreground'
-                      : 'bg-muted'
-                  }`}
-                >
-                  {message.role === 'assistant' ? (
-                    <div className="prose prose-sm dark:prose-invert max-w-none">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                        {message.content}
-                      </ReactMarkdown>
-                    </div>
-                  ) : (
-                    <p className="whitespace-pre-wrap text-sm sm:text-base">{message.content}</p>
-                  )}
+                <div className={`flex items-start gap-2 sm:gap-3 max-w-[90%] sm:max-w-[85%] ${message.role === 'user' ? 'flex-row-reverse' : ''}`}>
+                  <Avatar className="h-7 w-7 sm:h-8 sm:w-8 flex-shrink-0">
+                    <AvatarFallback className={message.role === 'user' ? 'bg-primary text-primary-foreground' : 'bg-primary/10 text-primary'}>
+                      {message.role === 'user' ? <User className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> : <Bot className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div
+                    className={`rounded-xl sm:rounded-lg p-3 sm:p-4 transition-all ${
+                      message.role === 'user'
+                        ? 'bg-primary text-primary-foreground'
+                        : 'bg-muted'
+                    }`}
+                  >
+                    {message.role === 'assistant' ? (
+                      <div className="prose prose-sm dark:prose-invert max-w-none">
+                        <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                          {message.content}
+                        </ReactMarkdown>
+                      </div>
+                    ) : (
+                      <p className="whitespace-pre-wrap text-sm sm:text-base">{message.content}</p>
+                    )}
+                  </div>
                 </div>
               </div>
             );
@@ -756,6 +781,7 @@ export default function ChatPage() {
           </p>
         </div>
       </div>
-    </div>
+      </div>
+    </TooltipProvider>
   );
 }
