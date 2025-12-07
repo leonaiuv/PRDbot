@@ -1,9 +1,10 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { ArrowLeft, Eye, EyeOff, Save, Loader2, AlertCircle } from 'lucide-react';
+import { ArrowLeft, Eye, EyeOff, Save, Loader2, AlertCircle, Moon, Sun, Monitor } from 'lucide-react';
 import Link from 'next/link';
 import { toast } from 'sonner';
+import { useTheme } from 'next-themes';
 
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -19,11 +20,13 @@ import {
 import { Separator } from '@/components/ui/separator';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { useSettingsStore } from '@/store';
 import { AI_MODELS } from '@/types';
 
 export default function SettingsPage() {
   const { settings, loadSettings, updateSettings } = useSettingsStore();
+  const { theme, setTheme } = useTheme();
   const [mounted, setMounted] = useState(false);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [apiKeys, setApiKeys] = useState<Record<string, string>>({});
@@ -236,6 +239,47 @@ export default function SettingsPage() {
                   <SelectItem value="docx">Word (.docx)</SelectItem>
                 </SelectContent>
               </Select>
+            </CardContent>
+          </Card>
+
+          {/* 主题设置 */}
+          <Card className="shadow-sm border-0 bg-background">
+            <CardHeader className="pb-4">
+              <CardTitle className="text-base sm:text-lg flex items-center gap-2">
+                <span className="w-1 h-5 bg-primary rounded-full"></span>
+                外观设置
+              </CardTitle>
+              <CardDescription className="text-xs sm:text-sm pl-3">选择你喜欢的主题模式</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <ToggleGroup
+                type="single"
+                value={theme}
+                onValueChange={(value) => value && setTheme(value)}
+                className="justify-start gap-2"
+              >
+                <ToggleGroupItem
+                  value="light"
+                  className="flex-1 sm:flex-none px-4 py-2 gap-2 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                >
+                  <Sun className="h-4 w-4" />
+                  浅色
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="dark"
+                  className="flex-1 sm:flex-none px-4 py-2 gap-2 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                >
+                  <Moon className="h-4 w-4" />
+                  深色
+                </ToggleGroupItem>
+                <ToggleGroupItem
+                  value="system"
+                  className="flex-1 sm:flex-none px-4 py-2 gap-2 data-[state=on]:bg-primary data-[state=on]:text-primary-foreground"
+                >
+                  <Monitor className="h-4 w-4" />
+                  跟随系统
+                </ToggleGroupItem>
+              </ToggleGroup>
             </CardContent>
           </Card>
 

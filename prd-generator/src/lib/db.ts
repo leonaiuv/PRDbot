@@ -1,5 +1,5 @@
 import Dexie, { type EntityTable } from 'dexie';
-import type { Project, Settings, ChatDraft, PRDGenerationTaskPersisted } from '@/types';
+import type { Project, Settings, ChatDraft, PRDGenerationTaskPersisted, PRDVersion } from '@/types';
 import { encryptApiKeys, decryptApiKeys, isEncrypted } from './crypto';
 
 // 定义数据库类
@@ -8,6 +8,7 @@ class PRDDatabase extends Dexie {
   settings!: EntityTable<Settings, 'id'>;
   chatDrafts!: EntityTable<ChatDraft, 'projectId'>;
   prdTasks!: EntityTable<PRDGenerationTaskPersisted, 'projectId'>;
+  prdVersions!: EntityTable<PRDVersion, 'id'>;
 
   constructor() {
     super('PRDGeneratorDB');
@@ -24,6 +25,15 @@ class PRDDatabase extends Dexie {
       settings: 'id',
       chatDrafts: 'projectId, updatedAt',
       prdTasks: 'projectId, phase, updatedAt'
+    });
+
+    // 版本3: 添加PRD版本历史
+    this.version(3).stores({
+      projects: 'id, name, createdAt, updatedAt, status',
+      settings: 'id',
+      chatDrafts: 'projectId, updatedAt',
+      prdTasks: 'projectId, phase, updatedAt',
+      prdVersions: 'id, projectId, createdAt'
     });
   }
 }
@@ -203,6 +213,54 @@ export const prdTasksDB = {
     
     const ids = completedTasks.map(t => t.projectId);
     return await db.prdTasks.bulkDelete(ids).then(() => ids.length);
+  }
+};
+
+// PRD版本历史操作函数
+export const prdVersionsDB = {
+  // 获取项目的所有版本
+  async getByProject(projectId: string): Promise<PRDVersion[]> {
+    return await db.prdVersions
+      .where('projectId')
+      .equals(projectId)
+      .reverse()
+      .sortBy('createdAt');
+  },
+
+  // 获取单个版本
+  async get(id: string): Promise<PRDVersion | undefined> {
+    return await db.prdVersions.get(id);
+  },
+
+  // 保存新版本
+  async create(version: PRDVersion): Promise<string> {
+    await db.prdVersions.add(version);
+    return version.id;
+  },
+
+  // 删除版本
+  async delete(id: string): Promise<void> {
+    return await db.prdVersions.delete(id);
+  },
+
+  // 删除项目的所有版本
+  async deleteByProject(projectId: string): Promise<number> {
+    return await db.prdVersions.where('projectId').equals(projectId).delete();
+  },
+
+  // 获取项目版本数量
+  async countByProject(projectId: string): Promise<number> {
+    return await db.prdVersions.where('projectId').equals(projectId).count();
+  },
+
+  // 清理旧版本（保留最近10个）
+  async cleanupOld(projectId: string, keepCount: number = 10): Promise<number> {
+    const versions = await this.getByProject(projectId);
+    if (versions.length <= keepCount) return 0;
+    
+    const toDelete = versions.slice(keepCount);
+    const ids = toDelete.map(v => v.id);
+    return await db.prdVersions.bulkDelete(ids).then(() => ids.length);
   }
 };
 

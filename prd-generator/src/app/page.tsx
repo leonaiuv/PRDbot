@@ -10,22 +10,34 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ProjectCard } from '@/components/project-card';
 import { NewProjectDialog } from '@/components/new-project-dialog';
+import { ThemeToggle } from '@/components/theme-toggle';
+import { ProjectTagFilter } from '@/components/project-tag-selector';
 import { useProjectStore } from '@/store';
+import type { ProjectTagId } from '@/types';
 
 export default function Home() {
   const { projects, isLoading, searchKeyword, loadProjects, setSearchKeyword } = useProjectStore();
   const [mounted, setMounted] = useState(false);
+  const [selectedTags, setSelectedTags] = useState<ProjectTagId[]>([]);
 
   useEffect(() => {
     setMounted(true);
     loadProjects();
   }, [loadProjects]);
 
-  // 过滤项目
-  const filteredProjects = projects.filter(p =>
-    p.name.toLowerCase().includes(searchKeyword.toLowerCase()) ||
-    p.initialInput.toLowerCase().includes(searchKeyword.toLowerCase())
-  );
+  // 过滤项目（同时支持关键词和标签）
+  const filteredProjects = projects.filter(p => {
+    // 关键词筛选
+    const matchesKeyword = 
+      p.name.toLowerCase().includes(searchKeyword.toLowerCase()) ||
+      p.initialInput.toLowerCase().includes(searchKeyword.toLowerCase());
+    
+    // 标签筛选
+    const matchesTags = selectedTags.length === 0 || 
+      selectedTags.every(tag => p.tags?.includes(tag));
+    
+    return matchesKeyword && matchesTags;
+  });
 
   if (!mounted) {
     return null;
@@ -42,6 +54,7 @@ export default function Home() {
               <span className="font-semibold text-base sm:text-lg">PRD 生成工具</span>
             </div>
             <div className="flex items-center gap-1 sm:gap-2">
+              <ThemeToggle />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Link href="/settings">
@@ -59,16 +72,21 @@ export default function Home() {
 
       {/* 主内容 */}
       <main className="max-w-7xl mx-auto w-full px-4 sm:px-6 lg:px-8 py-6 sm:py-8 flex-1">
-        {/* 搜索框 */}
-        <div className="mb-6 sm:mb-8 flex justify-center">
-          <div className="relative w-full max-w-lg">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
-            <Input
-              placeholder="搜索项目..."
-              value={searchKeyword}
-              onChange={(e) => setSearchKeyword(e.target.value)}
-              className="pl-9 h-10 sm:h-11 transition-shadow focus:shadow-md"
-            />
+        {/* 搜索框和标签筛选 */}
+        <div className="mb-6 sm:mb-8 space-y-4">
+          <div className="flex justify-center">
+            <div className="relative w-full max-w-lg">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="搜索项目..."
+                value={searchKeyword}
+                onChange={(e) => setSearchKeyword(e.target.value)}
+                className="pl-9 h-10 sm:h-11 transition-shadow focus:shadow-md"
+              />
+            </div>
+          </div>
+          <div className="flex justify-center">
+            <ProjectTagFilter selectedTags={selectedTags} onTagsChange={setSelectedTags} />
           </div>
         </div>
 
@@ -93,12 +111,12 @@ export default function Home() {
               <FileText className="h-8 w-8 sm:h-10 sm:w-10 text-muted-foreground" />
             </div>
             <h3 className="text-lg sm:text-xl font-medium mb-2">
-              {searchKeyword ? '没有找到匹配的项目' : '还没有项目'}
+              {searchKeyword || selectedTags.length > 0 ? '没有找到匹配的项目' : '还没有项目'}
             </h3>
             <p className="text-sm sm:text-base text-muted-foreground mb-4 sm:mb-6 max-w-sm mx-auto">
-              {searchKeyword ? '尝试使用其他关键词搜索' : '点击上方"新建项目"按钮开始创建你的第一个 PRD'}
+              {searchKeyword || selectedTags.length > 0 ? '尝试使用其他关键词或清除筛选' : '点击上方"新建项目"按钮开始创建你的第一个 PRD'}
             </p>
-            {!searchKeyword && <NewProjectDialog />}
+            {!searchKeyword && selectedTags.length === 0 && <NewProjectDialog />}
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 sm:gap-6">

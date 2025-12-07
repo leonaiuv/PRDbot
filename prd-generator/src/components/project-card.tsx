@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { format } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
-import { MoreVertical, Trash2, FileDown, Play, Eye } from 'lucide-react';
+import { MoreVertical, Trash2, FileDown, Play, Eye, Tag } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from 'sonner';
 
@@ -15,6 +15,7 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import {
@@ -32,8 +33,10 @@ import {
   HoverCardContent,
   HoverCardTrigger,
 } from '@/components/ui/hover-card';
+import { ProjectTagsDisplay } from '@/components/project-tag-selector';
 import { useProjectStore } from '@/store';
-import type { Project } from '@/types';
+import type { Project, ProjectTagId } from '@/types';
+import { PROJECT_TAGS } from '@/types';
 
 interface ProjectCardProps {
   project: Project;
@@ -47,7 +50,7 @@ const statusMap = {
 
 export function ProjectCard({ project }: ProjectCardProps) {
   const router = useRouter();
-  const { deleteProject } = useProjectStore();
+  const { deleteProject, updateProject } = useProjectStore();
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
 
   const handleContinue = () => {
@@ -66,6 +69,15 @@ export function ProjectCard({ project }: ProjectCardProps) {
 
   const handleExport = () => {
     router.push(`/project/${project.id}/prd?export=true`);
+  };
+
+  const handleToggleTag = async (tagId: ProjectTagId, e: React.MouseEvent) => {
+    e.stopPropagation();
+    const currentTags = project.tags || [];
+    const newTags = currentTags.includes(tagId)
+      ? currentTags.filter(t => t !== tagId)
+      : [...currentTags, tagId];
+    await updateProject(project.id, { tags: newTags });
   };
 
   const status = statusMap[project.status];
@@ -119,6 +131,30 @@ export function ProjectCard({ project }: ProjectCardProps) {
                   <FileDown className="mr-2 h-4 w-4" /> 导出
                 </DropdownMenuItem>
               )}
+              <DropdownMenuSeparator />
+              <div className="px-2 py-1.5">
+                <span className="text-xs text-muted-foreground">标签</span>
+                <div className="flex flex-wrap gap-1 mt-1.5">
+                  {PROJECT_TAGS.slice(0, 6).map(tag => {
+                    const isSelected = project.tags?.includes(tag.id);
+                    return (
+                      <button
+                        key={tag.id}
+                        onClick={(e) => handleToggleTag(tag.id, e)}
+                        className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] transition-colors ${
+                          isSelected
+                            ? 'bg-primary/20 text-primary'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/80'
+                        }`}
+                      >
+                        <span className={`w-1.5 h-1.5 rounded-full ${tag.color}`} />
+                        {tag.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <DropdownMenuSeparator />
               <DropdownMenuItem
                 onSelect={(e) => { e.preventDefault(); setDeleteDialogOpen(true); }}
                 className="text-destructive focus:text-destructive"
@@ -129,6 +165,11 @@ export function ProjectCard({ project }: ProjectCardProps) {
           </DropdownMenu>
         </div>
         <Badge variant={status.variant} className="w-fit text-[10px] sm:text-xs">{status.label}</Badge>
+        {project.tags && project.tags.length > 0 && (
+          <div className="mt-2">
+            <ProjectTagsDisplay tags={project.tags} maxDisplay={3} size="sm" />
+          </div>
+        )}
       </CardHeader>
 
       <CardContent className="pb-2 sm:pb-3">

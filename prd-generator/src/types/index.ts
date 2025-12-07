@@ -1,6 +1,22 @@
 // 项目状态类型
 export type ProjectStatus = 'exploring' | 'generated' | 'exported';
 
+// 项目标签预设
+export const PROJECT_TAGS = [
+  { id: 'in-progress', label: '进行中', color: 'bg-blue-500' },
+  { id: 'completed', label: '已完成', color: 'bg-green-500' },
+  { id: 'archived', label: '已归档', color: 'bg-gray-500' },
+  { id: 'web', label: 'Web端', color: 'bg-purple-500' },
+  { id: 'mobile', label: '移动端', color: 'bg-orange-500' },
+  { id: 'desktop', label: '桌面端', color: 'bg-teal-500' },
+  { id: 'saas', label: 'SaaS', color: 'bg-indigo-500' },
+  { id: 'ai', label: 'AI', color: 'bg-pink-500' },
+  { id: 'urgent', label: '紧急', color: 'bg-red-500' },
+  { id: 'important', label: '重要', color: 'bg-amber-500' },
+] as const;
+
+export type ProjectTagId = typeof PROJECT_TAGS[number]['id'];
+
 // 选择器类型
 export type SelectorType = 'radio' | 'checkbox' | 'dropdown' | 'text';
 
@@ -70,6 +86,7 @@ export interface Project {
   conversation: ConversationMessage[];
   prdContent: string;
   metadata: ProjectMetadata;
+  tags?: ProjectTagId[];  // 项目标签
 }
 
 // API密钥配置
@@ -239,4 +256,16 @@ export interface ChatDraft {
   inputDraft: string;
   // 更新时间
   updatedAt: number;
+}
+
+// ========== PRD版本历史 ==========
+
+// PRD版本快照
+export interface PRDVersion {
+  id: string;
+  projectId: string;
+  content: string;
+  createdAt: number;
+  description?: string;  // 版本说明
+  isAuto: boolean;       // 是否自动保存
 }

@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState, useRef, useCallback } from 'react';
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react';
 import { useParams, useRouter, useSearchParams } from 'next/navigation';
-import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, Construction, FileText, AlertCircle, RefreshCcw, Bot, User } from 'lucide-react';
+import { ArrowLeft, Settings, Send, Loader2, Download, Edit, Eye, Construction, FileText, AlertCircle, RefreshCcw, Bot, User, Keyboard } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import Link from 'next/link';
 import { toast } from 'sonner';
@@ -25,7 +25,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { useProjectStore, useSettingsStore, usePRDGenerationStore } from '@/store';
-import { exportMarkdown } from '@/lib/export';
+import { exportMarkdown, exportPDF, exportWord } from '@/lib/export';
+import { useKeyboardShortcuts, type KeyboardShortcut } from '@/hooks/use-keyboard-shortcuts';
+import { KeyboardShortcutsDialog } from '@/components/keyboard-shortcuts-dialog';
+import { VersionHistory, useAutoSaveVersion } from '@/components/version-history';
+import { ConversationSummary } from '@/components/conversation-summary';
+import { AIAnalysisTools } from '@/components/ai-analysis-tools';
+import { CopyToAITools } from '@/components/copy-to-ai-tools';
+import { MultiLanguagePRD } from '@/components/multi-language-prd';
+import { ImportPRDDialog } from '@/components/import-prd-dialog';
+import { SharePRDDialog } from '@/components/share-prd-dialog';
 import type { ConversationMessage } from '@/types';
 
 // 动态导入Markdown编辑器
@@ -90,11 +99,64 @@ export default function PRDPage() {
   // P4: 标记是否已经启动了生成任务，防止恢复逻辑覆盖
   const generationStartedRef = useRef(false);
 
-  // 从PRD任务状态获取生成中状态
+  // 从 PRD 任务状态获取生成中状态
   const isGenerating = prdTask?.phase === 'generating';
   const prdTaskContent = prdTask?.streamContent || '';
   const prdTaskElapsedTime = prdTask?.elapsedTime || 0;
   const prdTaskError = prdTask?.phase === 'error' ? prdTask.error : undefined;
+  
+  // 恢复版本回调（必须在所有 early return 之前调用）
+  const handleRestoreVersion = useCallback(async (content: string) => {
+    await updatePRDContent(content);
+  }, [updatePRDContent]);
+
+  // 快捷键配置
+  const shortcuts = useMemo<KeyboardShortcut[]>(() => [
+    {
+      key: 's',
+      ctrl: true,
+      description: '保存 PRD',
+      action: () => {
+        if (currentProject?.prdContent) {
+          toast.success('PRD 已保存');
+        }
+      },
+    },
+    {
+      key: 'e',
+      ctrl: true,
+      description: '导出 Markdown',
+      action: () => {
+        if (currentProject?.prdContent) {
+          exportMarkdown(currentProject.prdContent, currentProject.name);
+          setProjectStatus('exported');
+          toast.success('Markdown 导出成功');
+        } else {
+          toast.error('没有可导出的内容');
+        }
+      },
+    },
+    {
+      key: 'Escape',
+      description: '取消生成',
+      action: () => {
+        if (isGenerating) {
+          clearTask(projectId);
+          toast.info('PRD 生成已取消');
+        }
+      },
+    },
+    {
+      key: ',',
+      ctrl: true,
+      description: '打开设置',
+      action: () => {
+        router.push('/settings');
+      },
+    },
+  ], [currentProject, setProjectStatus, isGenerating, clearTask, projectId, router]);
+  
+  useKeyboardShortcuts({ shortcuts });
 
   // 加载项目和设置
   useEffect(() => {
@@ -483,16 +545,42 @@ ${currentProject.prdContent}
   }, [currentProject, updatePRDContent]);
 
   // 导出功能
-  const handleExport = (format: 'md') => {
+  const handleExport = (format: 'md' | 'pdf' | 'docx') => {
     if (!currentProject?.prdContent) {
       toast.error('没有可导出的内容');
       return;
     }
 
-    exportMarkdown(currentProject.prdContent, currentProject.name);
-    setProjectStatus('exported');
-    toast.success('Markdown 导出成功');
+    try {
+      switch (format) {
+        case 'md':
+          exportMarkdown(currentProject.prdContent, currentProject.name);
+          setProjectStatus('exported');
+          toast.success('Markdown 导出成功');
+          break;
+        case 'pdf':
+          exportPDF(currentProject.prdContent, currentProject.name);
+          setProjectStatus('exported');
+          toast.success('PDF 导出成功，请在打印对话框中选择"保存为 PDF"');
+          break;
+        case 'docx':
+          exportWord(currentProject.prdContent, currentProject.name);
+          setProjectStatus('exported');
+          toast.success('Word 文档导出成功');
+          break;
+      }
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '导出失败');
+    }
   };
+
+  // 自动保存版本（必须在所有 early return 之前调用）
+  // 当 currentProject 不存在时传入空字符串，enabled 为 false
+  useAutoSaveVersion(
+    projectId, 
+    currentProject?.prdContent || '', 
+    !isGenerating && !!currentProject
+  );
 
   if (!mounted || isLoading) {
     return (
@@ -537,6 +625,57 @@ ${currentProject.prdContent}
               </h1>
             </div>
             <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+              {/* 导入PRD */}
+              {!currentProject.prdContent && settings && (
+                <ImportPRDDialog
+                  onImport={async (content) => {
+                    await updatePRDContent(content);
+                    await setProjectStatus('generated');
+                  }}
+                  model={settings.defaultModel}
+                  apiKey={settings.apiKeys[settings.defaultModel]}
+                  customApiUrl={settings.customApiUrl}
+                />
+              )}
+              {/* 分享功能 */}
+              {currentProject.prdContent && (
+                <SharePRDDialog
+                  prdContent={currentProject.prdContent}
+                  projectName={currentProject.name}
+                />
+              )}
+              {/* 翻译功能 */}
+              {currentProject.prdContent && settings && (
+                <MultiLanguagePRD
+                  prdContent={currentProject.prdContent}
+                  projectName={currentProject.name}
+                  model={settings.defaultModel}
+                  apiKey={settings.apiKeys[settings.defaultModel] || ''}
+                  customApiUrl={settings.customApiUrl}
+                />
+              )}
+              {/* 复制到AI工具 */}
+              {currentProject.prdContent && (
+                <CopyToAITools
+                  prdContent={currentProject.prdContent}
+                  projectName={currentProject.name}
+                />
+              )}
+              {/* AI分析工具 */}
+              {currentProject.prdContent && settings && (
+                <AIAnalysisTools
+                  prdContent={currentProject.prdContent}
+                  model={settings.defaultModel}
+                  apiKey={settings.apiKeys[settings.defaultModel] || ''}
+                  customApiUrl={settings.customApiUrl}
+                />
+              )}
+              {/* 版本历史 */}
+              <VersionHistory
+                projectId={projectId}
+                currentContent={currentProject.prdContent || ''}
+                onRestore={handleRestoreVersion}
+              />
               <Tooltip>
                 <TooltipTrigger asChild>
                   <DropdownMenu>
@@ -550,18 +689,21 @@ ${currentProject.prdContent}
                       <DropdownMenuItem onClick={() => handleExport('md')}>
                         Markdown (.md)
                       </DropdownMenuItem>
-                      <DropdownMenuItem disabled className="opacity-50 cursor-not-allowed">
-                        <Construction className="mr-2 h-4 w-4" />
-                        PDF (.pdf) - 开发中
+                      <DropdownMenuItem onClick={() => handleExport('pdf')}>
+                        PDF (.pdf)
                       </DropdownMenuItem>
-                      <DropdownMenuItem disabled className="opacity-50 cursor-not-allowed">
-                        <Construction className="mr-2 h-4 w-4" />
-                        Word (.docx) - 开发中
+                      <DropdownMenuItem onClick={() => handleExport('docx')}>
+                        Word (.doc)
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </TooltipTrigger>
                 <TooltipContent>导出 PRD 文档</TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <KeyboardShortcutsDialog />
+                </TooltipTrigger>
               </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -612,6 +754,14 @@ ${currentProject.prdContent}
           
           <ScrollArea className="flex-1 min-h-0 custom-scrollbar" viewportRef={scrollViewportRef}>
             <div className="p-3 sm:p-4 space-y-3">
+              {/* 对话摘要 */}
+              {currentProject.conversation.length > 2 && (
+                <ConversationSummary 
+                  conversation={currentProject.conversation} 
+                  className="mb-4"
+                />
+              )}
+              
               {currentProject.conversation.slice(-10).map((message) => (
                 <div
                   key={message.id}
