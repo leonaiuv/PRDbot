@@ -9,7 +9,7 @@
 
 import '@testing-library/jest-dom';
 import React from 'react';
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { AIAnalysisTools } from '@/components/ai-analysis-tools';
 import { analysisResultsDB } from '@/lib/db';
@@ -429,11 +429,12 @@ describe('AIAnalysisTools 组件', () => {
 
     it('并发分析请求应该正确处理', async () => {
       let resolveFirst: (value: Response) => void;
-      let resolveSecond: (value: Response) => void;
+      // eslint-disable-next-line @typescript-eslint/no-unused-vars
+      let _resolveSecond: (value: Response) => void;
       
       mockFetch
         .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve; }))
-        .mockImplementationOnce(() => new Promise(resolve => { resolveSecond = resolve; }));
+        .mockImplementationOnce(() => new Promise(resolve => { _resolveSecond = resolve; }));
       
       const user = userEvent.setup();
       render(<AIAnalysisTools {...defaultProps} />);

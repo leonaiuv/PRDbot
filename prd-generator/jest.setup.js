@@ -53,6 +53,24 @@ global.ResizeObserver = class ResizeObserver {
   unobserve() {}
 }
 
+// Mock URL.createObjectURL and URL.revokeObjectURL for file-saver
+if (typeof window !== 'undefined' && typeof URL !== 'undefined') {
+  URL.createObjectURL = jest.fn(() => 'blob:mock-url');
+  URL.revokeObjectURL = jest.fn();
+}
+
+// Polyfill Blob.prototype.text for jsdom
+if (typeof Blob !== 'undefined' && !Blob.prototype.text) {
+  Blob.prototype.text = function() {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = reject;
+      reader.readAsText(this);
+    });
+  };
+}
+
 // Suppress console errors in tests (optional)
 const originalError = console.error
 beforeAll(() => {

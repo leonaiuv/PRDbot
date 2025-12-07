@@ -16,7 +16,6 @@ import {
   BarChart3,
   Target,
   TrendingUp,
-  AlertCircle,
   FileText
 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';

@@ -13,6 +13,8 @@ import type {
   AnalysisResult,
   AnalysisType,
 } from '@/types'
+import type { ValidatedDiagram, PRDTemplate } from '@/lib/diagram-validator'
+import type { DiagramType } from '@/lib/diagram-validator'
 
 export function generateTestId(): string {
   return `test-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`
@@ -226,3 +228,100 @@ export function createTestAnalysisResult(
 }
 
 export const TEST_ANALYSIS_TYPES: AnalysisType[] = ['optimize', 'score', 'competitor', 'diagram']
+
+// ========== 新增：图表测试工厂函数 ==========
+
+export function createTestDiagram(
+  type: DiagramType = 'architecture',
+  overrides?: Partial<ValidatedDiagram>
+): ValidatedDiagram {
+  const typeMap: Record<DiagramType, { title: string; code: string }> = {
+    architecture: {
+      title: '系统架构图',
+      code: 'graph TB\n    A[用户] --> B[前端]\n    B --> C[后端]\n    C --> D[(数据库)]',
+    },
+    flowchart: {
+      title: '用户流程图',
+      code: 'flowchart LR\n    Start([开始]) --> Login[登录]\n    Login --> Dashboard[仪表盘]',
+    },
+    er: {
+      title: 'ER关系图',
+      code: 'erDiagram\n    USER ||--o{ ORDER : places\n    USER {\n        string name\n    }',
+    },
+    sequence: {
+      title: '时序图',
+      code: 'sequenceDiagram\n    Alice->>Bob: Hello\n    Bob->>Alice: Hi',
+    },
+    class: {
+      title: '类图',
+      code: 'classDiagram\n    class User {\n        +String name\n    }',
+    },
+  }
+
+  const template = typeMap[type]
+  return {
+    title: template.title,
+    type,
+    code: template.code,
+    ...overrides,
+  }
+}
+
+export function createTestTemplate(overrides?: Partial<PRDTemplate>): PRDTemplate {
+  return {
+    id: `test-template-${generateTestId()}`,
+    name: '测试模板',
+    description: '这是一个测试模板',
+    category: 'custom',
+    icon: '📝',
+    prompts: ['测试需求1', '测试需求2'],
+    tags: ['测试', '模板'],
+    ...overrides,
+  }
+}
+
+// 生成各种畸形JSON用于测试
+export function createInvalidJSON(type: 'malformed' | 'incomplete' | 'wrong-structure'): string {
+  switch (type) {
+    case 'malformed':
+      return '{ invalid json }'
+    case 'incomplete':
+      return '{"diagrams": ['
+    case 'wrong-structure':
+      return '{"data": {"wrong": "structure"}}'
+    default:
+      return '{}'
+  }
+}
+
+// 生成SSRF测试载荷
+export function createSSRFPayload(type: 'localhost' | 'private-ip' | 'ipv6' | 'url-encoded'): string {
+  switch (type) {
+    case 'localhost':
+      return 'https://localhost/api'
+    case 'private-ip':
+      return 'https://192.168.1.1/api'
+    case 'ipv6':
+      return 'https://[::1]/api'
+    case 'url-encoded':
+      return 'https://127%2e0%2e0%2e1/api'
+    default:
+      return 'https://localhost/api'
+  }
+}
+
+// 生成导出选项配置
+export interface TestExportOptions {
+  format: 'md' | 'json' | 'pdf' | 'doc'
+  filename: string
+  content: string
+}
+
+export function createTestExportOptions(overrides?: Partial<TestExportOptions>): TestExportOptions {
+  return {
+    format: 'md',
+    filename: '测试文档',
+    content: '# 测试PRD\n\n这是测试内容',
+    ...overrides,
+  }
+}

@@ -12,6 +12,7 @@ const customJestConfig = {
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/src/$1',
     '^uuid$': '<rootDir>/src/__tests__/__mocks__/uuid.js',
+    '^file-saver$': '<rootDir>/src/__tests__/__mocks__/file-saver.ts',
   },
   testMatch: [
     '**/__tests__/**/*.test.[jt]s?(x)',
