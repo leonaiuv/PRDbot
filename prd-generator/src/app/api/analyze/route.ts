@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server';
 import { getModelConfig } from '@/lib/model-config';
-import { handleAIAPIError } from '@/lib/error-mapper';
+import { handleAIAPIError, type ErrorResponse } from '@/lib/error-mapper';
+import {
+  validateDiagramResponse,
+  buildDiagramRetryPrompt,
+  convertDiagramsToMarkdown,
+  extractMermaidBlocksFromText,
+  type ValidatedDiagramsResponse,
+} from '@/lib/diagram-validator';
 
 // AI分析类型
 type AnalysisType = 'optimize' | 'score' | 'competitor' | 'diagram';
@@ -191,32 +198,155 @@ const ANALYSIS_PROMPTS: Record<AnalysisType, string> = {
 
   diagram: `你是一位系统架构师。请根据以下PRD内容生成Mermaid格式的图表。
 
-请生成以下图表（使用Mermaid语法）：
+【重要约束】
+1. 仅输出有效的Mermaid代码块，禁止任何多余文字
+2. 每个图表必须包含在 \`\`\`mermaid 和 \`\`\` 之间
+3. 禁止使用任何样式定义（style、classDef、fill、color等）
+4. 节点ID只能使用字母、数字和下划线，禁止使用特殊符号
+5. 节点标签必须用方括号["标签"]或圆角括号("标签")包裹
+6. 文字内容使用中文
 
-## 1. 系统架构图
-\`\`\`mermaid
-graph TB
-    [描述系统的主要组件和它们之间的关系]
+【输出格式】严格按以下JSON格式输出：
+\`\`\`json
+{
+  "diagrams": [
+    {
+      "title": "系统架构图",
+      "type": "architecture",
+      "code": "graph TB\\n    A[\"前端应用\"] --> B[\"API网关\"]\\n    B --> C[\"业务服务\"]\\n    C --> D[(\"数据库\")]"
+    },
+    {
+      "title": "用户流程图", 
+      "type": "flowchart",
+      "code": "graph LR\\n    Start([\"开始\"]) --> Step1[\"步骤1\"]\\n    Step1 --> Step2[\"步骤2\"]\\n    Step2 --> End([\"结束\"])"
+    },
+    {
+      "title": "数据模型ER图",
+      "type": "er",
+      "code": "erDiagram\\n    USER ||--o{ ORDER : places\\n    ORDER ||--|{ ITEM : contains"
+    }
+  ]
+}
 \`\`\`
 
-## 2. 用户流程图
-\`\`\`mermaid
-graph LR
-    [描述用户的主要操作流程]
-\`\`\`
+【图表类型说明】
+- architecture: 系统架构图，使用 graph TB/LR，展示系统组件关系
+- flowchart: 用户流程图，使用 graph LR/TD，展示操作步骤
+- er: 数据模型图，使用 erDiagram，展示实体关系
 
-## 3. 数据模型ER图
-\`\`\`mermaid
-erDiagram
-    [描述主要的数据实体和关系]
-\`\`\`
-
-注意：
-- 保持图表简洁清晰
-- 使用中文标签
-- 不要使用样式定义（no style, no classDef）
-- 节点名称用方括号包裹`,
+【Mermaid语法规范】
+- graph节点: A["文字"]（方形）、B("文字")（圆角）、C(["文字"])（体育场形）、D{"文字"}（菱形）、E[("文字")]（圆柱）
+- 连接符: --> 或 --- 或 -.-> 或 ==>
+- erDiagram关系: ||--o{ 一对多、||--|| 一对一、}|--|{ 多对多`,
 };
+
+// 最大重试次数
+const MAX_RETRY_COUNT = 2;
+
+/**
+ * 调用AI API获取响应
+ */
+async function callAIAPI(
+  apiUrl: string,
+  apiKey: string,
+  modelName: string,
+  messages: { role: string; content: string }[]
+): Promise<{ content: string; error?: string; errorResponse?: ErrorResponse; status?: number }> {
+  const response = await fetch(apiUrl, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      model: modelName,
+      messages,
+      temperature: 0.7,
+      max_tokens: 4000,
+    }),
+  });
+
+  if (!response.ok) {
+    const { errorResponse, status } = await handleAIAPIError('analyze', response);
+    return { content: '', error: errorResponse.error, errorResponse, status };
+  }
+
+  const data = await response.json();
+  return { content: data.choices?.[0]?.message?.content || '' };
+}
+
+/**
+ * 处理图表生成请求，包含校验和重试逻辑
+ */
+async function handleDiagramGeneration(
+  apiUrl: string,
+  apiKey: string,
+  modelName: string,
+  prompt: string,
+  prdContent: string
+): Promise<{ content: string; retryCount: number; diagramsData?: ValidatedDiagramsResponse }> {
+  const messages: { role: string; content: string }[] = [
+    { role: 'system', content: prompt },
+    { role: 'user', content: `以下是需要分析的PRD文档：\n\n${prdContent}` },
+  ];
+
+  let retryCount = 0;
+  let lastContent = '';
+  let lastErrors: string[] = [];
+
+  while (retryCount <= MAX_RETRY_COUNT) {
+    console.log(`[图表生成] 尝试第 ${retryCount + 1} 次请求...`);
+
+    const result = await callAIAPI(apiUrl, apiKey, modelName, messages);
+    
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    lastContent = result.content;
+
+    // 校验图表响应
+    const validation = validateDiagramResponse(result.content);
+
+    if (validation.valid && validation.data) {
+      console.log(`[图表生成] 校验通过，共生成 ${validation.data.diagrams.length} 个图表`);
+      // 转换为Markdown格式返回
+      const markdownContent = convertDiagramsToMarkdown(validation.data);
+      return { content: markdownContent, retryCount, diagramsData: validation.data };
+    }
+
+    // 校验失败，记录错误
+    lastErrors = validation.errors || ['未知校验错误'];
+    console.warn(`[图表生成] 校验失败 (${retryCount + 1}/${MAX_RETRY_COUNT + 1}):`, lastErrors);
+
+    // 如果还可以重试，构建重试提示词
+    if (retryCount < MAX_RETRY_COUNT) {
+      const retryPrompt = buildDiagramRetryPrompt(lastErrors);
+      messages.push(
+        { role: 'assistant', content: result.content },
+        { role: 'user', content: retryPrompt }
+      );
+      retryCount++;
+    } else {
+      break;
+    }
+  }
+
+  // 所有重试均失败，尝试从原始内容提取mermaid代码块（降级处理）
+  console.warn(`[图表生成] 所有重试均失败，尝试降级提取...`);
+  const fallbackDiagrams = extractMermaidBlocksFromText(lastContent);
+  
+  if (fallbackDiagrams.length > 0) {
+    console.log(`[图表生成] 降级提取成功，共提取 ${fallbackDiagrams.length} 个图表`);
+    const fallbackData: ValidatedDiagramsResponse = { diagrams: fallbackDiagrams };
+    const markdownContent = convertDiagramsToMarkdown(fallbackData);
+    return { content: markdownContent, retryCount, diagramsData: fallbackData };
+  }
+
+  // 完全失败，返回原始内容和错误信息
+  console.error(`[图表生成] 完全失败，返回原始内容`);
+  return { content: lastContent, retryCount };
+}
 
 export async function POST(request: Request) {
   try {
@@ -264,32 +394,42 @@ export async function POST(request: Request) {
       actualModelName = config?.defaultModel || MODEL_NAMES[model] || model;
     }
 
-    const response = await fetch(apiUrl, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`,
-      },
-      body: JSON.stringify({
-        model: actualModelName,
-        messages: [
-          { role: 'system', content: prompt },
-          { role: 'user', content: `以下是需要分析的PRD文档：\n\n${prdContent}` },
-        ],
-        temperature: 0.7,
-        max_tokens: 4000,
-      }),
-    });
+    // 图表生成使用特殊处理逻辑（包含校验和重试）
+    if (type === 'diagram') {
+      const result = await handleDiagramGeneration(
+        apiUrl,
+        apiKey,
+        actualModelName,
+        prompt,
+        prdContent
+      );
 
-    if (!response.ok) {
-      const { errorResponse, status } = await handleAIAPIError('analyze', response);
-      return NextResponse.json(errorResponse, { status });
+      return NextResponse.json({
+        content: result.content,
+        retryCount: result.retryCount,
+        diagramsData: result.diagramsData,
+      });
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content || '';
+    // 其他分析类型使用普通处理逻辑
+    const result = await callAIAPI(
+      apiUrl,
+      apiKey,
+      actualModelName,
+      [
+        { role: 'system', content: prompt },
+        { role: 'user', content: `以下是需要分析的PRD文档：\n\n${prdContent}` },
+      ]
+    );
 
-    return NextResponse.json({ content });
+    if (result.error) {
+      return NextResponse.json(
+        result.errorResponse || { error: result.error },
+        { status: result.status || 500 }
+      );
+    }
+
+    return NextResponse.json({ content: result.content });
   } catch (error) {
     console.error('Analyze error:', error);
     return NextResponse.json(

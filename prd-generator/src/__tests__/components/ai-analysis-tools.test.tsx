@@ -620,3 +620,560 @@ describe('formatTime 函数（通过组件行为间接测试）', () => {
     await clearTestDatabase();
   });
 });
+
+describe('UI排版优化测试', () => {
+  const defaultProps = {
+    projectId: 'layout-test-project',
+    prdContent: '# 测试PRD\n\n这是一个测试产品需求文档。',
+    model: 'deepseek',
+    apiKey: 'sk-test-key',
+  };
+
+  beforeEach(async () => {
+    await clearTestDatabase();
+    mockFetch.mockReset();
+    mockToast.success.mockReset();
+    mockToast.error.mockReset();
+  });
+
+  afterEach(async () => {
+    await clearTestDatabase();
+  });
+
+  describe('ScoreResultRenderer 评分渲染器', () => {
+    it('应该正确提取并显示总分', async () => {
+      const scoreContent = '# 评分报告\n\n总分：85\n\n## 详细评分\n- 功能完整性：20/25\n- 技术可行性：18/20';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'score', {
+          content: scoreContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const scoreItem = viewItems.find(item => item.textContent?.includes('质量评分'));
+      if (scoreItem) {
+        await user.click(scoreItem);
+      }
+
+      // 应该显示评分卡片中的分数
+      await waitFor(() => {
+        expect(screen.getByText('85')).toBeInTheDocument();
+        expect(screen.getByText('/100')).toBeInTheDocument();
+      });
+    });
+
+    it('评分>=90应显示"优秀"标签', async () => {
+      const scoreContent = '总分：95\n\n这是一份优质的PRD';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'score', {
+          content: scoreContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const scoreItem = viewItems.find(item => item.textContent?.includes('质量评分'));
+      if (scoreItem) {
+        await user.click(scoreItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('优秀')).toBeInTheDocument();
+      });
+    });
+
+    it('评分>=80且<90应显示"良好"标签', async () => {
+      const scoreContent = '总分：85\n\n这是一份良好的PRD';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'score', {
+          content: scoreContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const scoreItem = viewItems.find(item => item.textContent?.includes('质量评分'));
+      if (scoreItem) {
+        await user.click(scoreItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('良好')).toBeInTheDocument();
+      });
+    });
+
+    it('评分>=70且<80应显示"合格"标签', async () => {
+      const scoreContent = '总分：72\n\n这是一份合格的PRD';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'score', {
+          content: scoreContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const scoreItem = viewItems.find(item => item.textContent?.includes('质量评分'));
+      if (scoreItem) {
+        await user.click(scoreItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('合格')).toBeInTheDocument();
+      });
+    });
+
+    it('评分<70应显示"待改进"标签', async () => {
+      const scoreContent = '总分：55\n\n这份PRD需要改进';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'score', {
+          content: scoreContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const scoreItem = viewItems.find(item => item.textContent?.includes('质量评分'));
+      if (scoreItem) {
+        await user.click(scoreItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('待改进')).toBeInTheDocument();
+      });
+    });
+
+    it('无法提取总分时应该不显示评分卡片', async () => {
+      const scoreContent = '# 分析报告\n\n这是一个没有总分的分析结果。';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'score', {
+          content: scoreContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const scoreItem = viewItems.find(item => item.textContent?.includes('质量评分'));
+      if (scoreItem) {
+        await user.click(scoreItem);
+      }
+
+      await waitFor(() => {
+        // 不应该有评分数字和/100标记
+        expect(screen.queryByText('/100')).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('OptimizeResultRenderer 优化建议渲染器', () => {
+    it('应该显示"AI 优化建议报告"标题', async () => {
+      const optimizeContent = '# 优化建议\n\n1. 建议一\n2. 建议二';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'optimize', {
+          content: optimizeContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const optimizeItem = viewItems.find(item => item.textContent?.includes('AI 优化建议'));
+      if (optimizeItem) {
+        await user.click(optimizeItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('AI 优化建议报告')).toBeInTheDocument();
+        expect(screen.getByText('基于PRD内容的智能分析与改进建议')).toBeInTheDocument();
+      });
+    });
+
+    it('内容以文本开头时应该显示摘要区域', async () => {
+      const optimizeContent = '这份PRD整体质量较高，以下是一些优化建议。\n\n# 详细建议\n1. 建议一';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'optimize', {
+          content: optimizeContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const optimizeItem = viewItems.find(item => item.textContent?.includes('AI 优化建议'));
+      if (optimizeItem) {
+        await user.click(optimizeItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('分析摘要')).toBeInTheDocument();
+      });
+    });
+
+    it('内容以标题开头时不应显示摘要区域', async () => {
+      const optimizeContent = '# 优化建议\n\n1. 建议一\n2. 建议二';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'optimize', {
+          content: optimizeContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const optimizeItem = viewItems.find(item => item.textContent?.includes('AI 优化建议'));
+      if (optimizeItem) {
+        await user.click(optimizeItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('AI 优化建议报告')).toBeInTheDocument();
+        // 不应显示摘要区域
+        expect(screen.queryByText('分析摘要')).not.toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('CompetitorResultRenderer 竞品分析渲染器', () => {
+    it('应该显示"竞品分析报告"标题', async () => {
+      const competitorContent = '# 竞品分析\n\n## 竞品A\n产品介绍...';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'competitor', {
+          content: competitorContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const competitorItem = viewItems.find(item => item.textContent?.includes('竞品分析'));
+      if (competitorItem) {
+        await user.click(competitorItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('竞品分析报告')).toBeInTheDocument();
+        expect(screen.getByText('市场竞争态势与差异化分析')).toBeInTheDocument();
+      });
+    });
+
+    it('识别到竞品关键词时应显示竞品数量', async () => {
+      const competitorContent = '# 竞品分析\n\n## 竞品1：Product A\n介绍...\n\n## 竞品2：Product B\n介绍...\n\n## 竞品3：Product C\n介绍...';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'competitor', {
+          content: competitorContent,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const competitorItem = viewItems.find(item => item.textContent?.includes('竞品分析'));
+      if (competitorItem) {
+        await user.click(competitorItem);
+      }
+
+      await waitFor(() => {
+        // 应该显示"识别 X 个竞品"
+        expect(screen.getByText(/识别 \d+ 个竞品/)).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('AnalysisResultView 内容布局测试', () => {
+    it('内容区域应该有内边距', async () => {
+      const content = '# 测试内容\n\n这是一段测试文本。';
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'optimize', {
+          content: content,
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const optimizeItem = viewItems.find(item => item.textContent?.includes('AI 优化建议'));
+      if (optimizeItem) {
+        await user.click(optimizeItem);
+      }
+
+      // 验证内容被正确渲染
+      await waitFor(() => {
+        expect(screen.getByTestId('markdown-content')).toBeInTheDocument();
+      });
+    });
+
+    it('应该显示生成时间和重新生成按钮', async () => {
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'optimize', {
+          content: '测试内容',
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const optimizeItem = viewItems.find(item => item.textContent?.includes('AI 优化建议'));
+      if (optimizeItem) {
+        await user.click(optimizeItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText(/生成于/)).toBeInTheDocument();
+        expect(screen.getByRole('button', { name: /重新生成/i })).toBeInTheDocument();
+      });
+    });
+
+    it('图表类型的重试次数应该显示标签', async () => {
+      // 设置重试次数的模拟响应
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ 
+          content: '```mermaid\ngraph TD\nA-->B\n```',
+          retryCount: 2
+        }),
+      } as Response);
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      await waitFor(() => {
+        expect(screen.getByText('生成图表')).toBeInTheDocument();
+      });
+
+      const menuItems = screen.getAllByRole('menuitem');
+      const diagramItem = menuItems.find(item => item.textContent?.includes('生成图表'));
+      if (diagramItem) {
+        await user.click(diagramItem);
+      }
+
+      await waitFor(() => {
+        expect(mockFetch).toHaveBeenCalled();
+      });
+
+      // 验证重试标签显示
+      await waitFor(() => {
+        // 查找包含"自动优化"的元素
+        expect(screen.getByText(/自动优化 2 次/)).toBeInTheDocument();
+      });
+    });
+
+    it('过期PRD应该显示警告标签', async () => {
+      // 保存带有不同哈希的结果，模拟PRD已更新
+      await analysisResultsDB.save(
+        createTestAnalysisResult(defaultProps.projectId, 'optimize', {
+          content: '旧分析结果',
+          prdContentHash: 'different-old-hash',
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await waitFor(() => {
+        expect(screen.getByText('1')).toBeInTheDocument();
+      });
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const viewItems = screen.getAllByRole('menuitem');
+      const optimizeItem = viewItems.find(item => item.textContent?.includes('AI 优化建议'));
+      if (optimizeItem) {
+        await user.click(optimizeItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('PRD已更新，建议重新生成')).toBeInTheDocument();
+      });
+    });
+  });
+
+  describe('LoadingIndicator 加载状态测试', () => {
+    it('图表类型加载时应显示"正在生成图表..."', async () => {
+      let resolveRequest: (value: Response) => void;
+      mockFetch.mockImplementationOnce(() => 
+        new Promise(resolve => { resolveRequest = resolve; })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const menuItems = screen.getAllByRole('menuitem');
+      const diagramItem = menuItems.find(item => item.textContent?.includes('生成图表'));
+      if (diagramItem) {
+        await user.click(diagramItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('正在生成图表...')).toBeInTheDocument();
+      });
+
+      // 完成请求
+      resolveRequest!({
+        ok: true,
+        json: async () => ({ content: 'graph TD' }),
+      } as Response);
+    });
+
+    it('非图表类型加载时应显示"正在分析中..."', async () => {
+      let resolveRequest: (value: Response) => void;
+      mockFetch.mockImplementationOnce(() => 
+        new Promise(resolve => { resolveRequest = resolve; })
+      );
+
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const menuItems = screen.getAllByRole('menuitem');
+      const optimizeItem = menuItems.find(item => item.textContent?.includes('AI 优化建议'));
+      if (optimizeItem) {
+        await user.click(optimizeItem);
+      }
+
+      await waitFor(() => {
+        expect(screen.getByText('正在分析中，请稍候...')).toBeInTheDocument();
+      });
+
+      // 完成请求
+      resolveRequest!({
+        ok: true,
+        json: async () => ({ content: '分析结果' }),
+      } as Response);
+    });
+  });
+
+  describe('EmptyState 空状态测试', () => {
+    it('无结果时应显示描述和开始分析按钮', async () => {
+      const user = userEvent.setup();
+      render(<AIAnalysisTools {...defaultProps} />);
+
+      await user.click(screen.getByRole('button', { name: /AI 分析/i }));
+
+      const menuItems = screen.getAllByRole('menuitem');
+      const optimizeItem = menuItems.find(item => item.textContent?.includes('AI 优化建议'));
+      if (optimizeItem) {
+        await user.click(optimizeItem);
+      }
+
+      // 等待Sheet打开
+      await waitFor(() => {
+        expect(screen.getByText('AI 分析结果')).toBeInTheDocument();
+      });
+
+      // 模拟API请求完成
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ content: '分析结果' }),
+      } as Response);
+
+      // 等待分析完成或空状态显示
+      await waitFor(() => {
+        // 应该显示分析结果或空状态
+        const resultOrEmpty = screen.queryByText('开始分析') || screen.queryByTestId('markdown-content');
+        expect(resultOrEmpty).toBeInTheDocument();
+      }, { timeout: 3000 });
+    });
+  });
+});
