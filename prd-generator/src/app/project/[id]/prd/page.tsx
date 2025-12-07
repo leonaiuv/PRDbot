@@ -248,6 +248,9 @@ export default function PRDPage() {
       return;  // 保持 generationStartedRef 为 true，因为确实有任务在运行
     }
 
+    // P6: 清除可能存在的旧状态，确保从干净状态开始
+    await clearTask(projectId);
+
     // 启动全局生成任务
     const abortController = startTask(projectId);
 

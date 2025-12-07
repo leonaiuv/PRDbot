@@ -774,13 +774,14 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
       if (finalCheck?.phase === 'generating' && finalCheck.abortController) {
         return false;
       }
-      
+
+      // P6: 恢复为 error 状态时，清空 streamContent（用户需要重新生成）
       const task: PRDGenerationTask = {
         projectId: persisted.projectId,
         phase: 'error',
         startTime: persisted.startTime,
         elapsedTime: persisted.elapsedTime,
-        streamContent: persisted.streamContent,
+        streamContent: '',  // P6: 清空旧内容，强制用户从头重新生成
         error: '生成过程中断，请重试',
       };
       set(state => {
@@ -794,10 +795,15 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
           // 新任务的时间戳更新，不覆盖
           return state;
         }
+        // P6: 同时清空 contentChunks，确保状态一致
         return {
           tasks: {
             ...state.tasks,
             [projectId]: task,
+          },
+          contentChunks: {
+            ...state.contentChunks,
+            [projectId]: [],  // P6: 清空 chunks
           },
         };
       });
@@ -805,11 +811,12 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
       await prdTasksDB.save({
         ...persisted,
         phase: 'error',
+        streamContent: '',  // P6: 持久化也清空
         error: '生成过程中断，请重试',
       });
       return true;
     }
-    
+
     // 其他状态直接恢复
     if (persisted.phase === 'error') {
       set(state => {
@@ -821,6 +828,7 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
         if (currentTask && currentTask.startTime > persisted.startTime) {
           return state;
         }
+        // P6: error 状态也清空旧内容
         return {
           tasks: {
             ...state.tasks,
@@ -829,9 +837,13 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
               phase: persisted.phase,
               startTime: persisted.startTime,
               elapsedTime: persisted.elapsedTime,
-              streamContent: persisted.streamContent,
+              streamContent: '',  // P6: 清空旧内容
               error: persisted.error,
             },
+          },
+          contentChunks: {
+            ...state.contentChunks,
+            [projectId]: [],  // P6: 清空 chunks
           },
         };
       });
