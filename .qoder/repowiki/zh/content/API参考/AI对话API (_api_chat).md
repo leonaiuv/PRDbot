@@ -9,6 +9,13 @@
 - [index.ts](file://prd-generator/src/types/index.ts)
 </cite>
 
+## 更新摘要
+**变更内容**
+- 更新了 `/api/chat` 端点的系统提示词（SYSTEM_PROMPT），强化了纯JSON输出模式
+- 明确了AI回复必须仅包含一个JSON代码块，禁止任何开场白或解释性文字
+- 细化了对话阶段控制规则和完成判断条件
+- 更新了相关文档部分以反映最新的系统提示词和生成规则
+
 ## 目录
 1. [简介](#简介)
 2. [项目结构](#项目结构)
@@ -46,13 +53,13 @@ API --> |"SSE返回validated: true/data 或 validated: false/rawContent/validati
 FE --> |"解析SSE并渲染"| UI
 ```
 
-图表来源
+**图表来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L425)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L94-L147)
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L226-L387)
 - [smart-selector.tsx](file://prd-generator/src/components/smart-selector.tsx#L1-L255)
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L1-L426)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L1-L274)
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L1-L762)
@@ -70,7 +77,7 @@ FE --> |"解析SSE并渲染"| UI
   - 失败：validated: false，rawContent: 原始内容，validationErrors: 校验错误列表，retryCount: 重试次数
 - 校验规则：后端通过系统提示词强制AI输出纯JSON；前端收到SSE后，若validated为true则解析data并渲染智能选择器；否则展示rawContent并提示错误
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L425)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L94-L147)
 - [index.ts](file://prd-generator/src/types/index.ts#L110-L123)
@@ -112,7 +119,7 @@ end
 end
 ```
 
-图表来源
+**图表来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L425)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L94-L147)
 
@@ -132,16 +139,24 @@ end
   - 失败：SSE，事件行以"data: "开头，包含validated=false与validationErrors/rawContent/retryCount
   - 错误：HTTP 400/500，JSON { error }
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L425)
 - [index.ts](file://prd-generator/src/types/index.ts#L110-L123)
 
 ### 系统提示词与纯JSON输出
 - 后端注入system消息，强制AI输出纯JSON，禁止任何解释性文字
+- 要求每次回复只能是一个JSON代码块，不能出现JSON之外的字符
 - JSON结构包含 questions 数组与 meta 元信息
 - 前端收到validated=true后，将data转换为选择器数据并渲染
+- 生成规则细化：
+  - 每轮生成1-3个问题，描述简洁、避免双重否定
+  - 优先使用radio/checkbox/dropdown；文本题仅用于收集少量开放信息
+  - 选项文案务必具体可执行，尽量<30字
+  - meta.phase按进度推进：basic(0-30%)关注背景/目标；feature(30-60%)关注功能/交互；technical(60-85%)关注实现方式/架构倾向；confirmation(85-100%)收尾确认
+  - progress根据完成度单调递增
+  - 当核心功能≥3、目标用户明确、技术/实现路径已有倾向时，设置canGeneratePRD: true，并加入一个收尾确认问题
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L91-L214)
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L34-L55)
 
@@ -166,11 +181,11 @@ DoneCheck --> |否| ReadChunk
 DoneCheck --> |是| End(["结束"])
 ```
 
-图表来源
+**图表来源**
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L221-L273)
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L269-L311)
 
-章节来源
+**章节来源**
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L221-L273)
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L269-L311)
 
@@ -179,7 +194,7 @@ DoneCheck --> |是| End(["结束"])
 - 若校验失败，后端追加重试提示词到消息历史，最多重试2次
 - 前端收到validated=true时，若retryCount>0，提示自动纠正
 
-章节来源
+**章节来源**
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L94-L147)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L189-L215)
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L315-L387)
@@ -192,7 +207,7 @@ DoneCheck --> |是| End(["结束"])
   - 域名白名单（允许的第三方API域名）
 - 前端发送时携带apiKey与model，后端仅在必要时转发至AI端点
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L31-L82)
 
 ### 前端fetch调用与SSE解析
@@ -219,11 +234,11 @@ end
 end
 ```
 
-图表来源
+**图表来源**
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L226-L387)
 - [smart-selector.tsx](file://prd-generator/src/components/smart-selector.tsx#L1-L255)
 
-章节来源
+**章节来源**
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L226-L387)
 - [smart-selector.tsx](file://prd-generator/src/components/smart-selector.tsx#L1-L255)
 
@@ -244,14 +259,14 @@ P --> S["components/smart-selector.tsx"]
 P --> T
 ```
 
-图表来源
+**图表来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L1-L426)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L1-L274)
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L1-L762)
 - [smart-selector.tsx](file://prd-generator/src/components/smart-selector.tsx#L1-L255)
 - [index.ts](file://prd-generator/src/types/index.ts#L110-L123)
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L1-L426)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L1-L274)
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L1-L762)
@@ -279,7 +294,7 @@ P --> T
   - 重试提示：validated=true且retryCount>0时提示自动纠正
   - 取消请求：使用AbortController，避免资源泄漏
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L425)
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L313-L375)
 
@@ -310,6 +325,6 @@ P --> T
   - validationErrors: 校验错误列表
   - retryCount: 重试次数
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L336-L416)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L94-L147)

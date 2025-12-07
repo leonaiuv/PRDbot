@@ -26,8 +26,8 @@
 本文件为 PRD 生成 API（/api/generate-prd）的详细技术文档，聚焦于：
 - 如何接收完整的对话历史（conversationHistory），并触发 PRD 文档的流式生成；
 - POST 请求参数说明：conversationHistory、model、apiKey、customApiUrl；
-- 服务端如何使用专用的 PRD_SYSTEM_PROMPT 指导 AI 生成符合 8 大模块（产品概述、功能需求、技术架构等）的 Markdown 格式文档；
-- 流式响应机制：通过 fetch 调用 AI 服务的流式接口，实时解析 SSE 数据块，提取 choices[0].delta.content 并重新封装为标准化的 SSE 流返回给前端；
+- 服务端如何使用专用的 PRD_SYSTEM_PROMPT 指导 AI 生成符合 9 大模块（产品概述、目标与范围、用户与体验、功能需求、实现与架构、数据模型、接口与流程、非功能需求、风险与迭代）的 Markdown 格式文档，并特别强调突出用户提供的开发经验、功能需求和架构倾向等信息；
+- 流式响应机制：通过 fetch 调用 AI 服务的流式接口，实时解析 SSE 数据块，提取 delta.content 并重新封装为标准化的 SSE 流返回给前端；
 - 错误处理策略：对话历史缺失、API 调用失败、SSRF 白名单校验、流解析异常；
 - 响应头配置：text/event-stream、Cache-Control、Connection；
 - 前端接收流数据并动态渲染到页面的流程与关键实现路径；
@@ -130,7 +130,7 @@ Page->>Page : 完成后持久化PRD内容
     - 不允许内网地址；
     - 必须在白名单域名集合中。
 - 消息构造
-  - system: PRD_SYSTEM_PROMPT（指导生成 8 大模块的 Markdown 文档）；
+  - system: PRD_SYSTEM_PROMPT（指导生成 9 大模块的 Markdown 文档，并突出用户提供的开发经验、功能需求和架构倾向等信息）；
   - user: “以下是用户的对话历史：\n\n{conversationHistory}\n\n请根据以上信息生成完整的 PRD 文档。”
 - AI 调用
   - stream: true；
@@ -207,7 +207,7 @@ Done --> |是| Close["关闭流"]
 ### 流式解析算法（前端）
 ```mermaid
 flowchart TD
-Start(["开始接收SSE"]) --> Read["读取响应块"]
+Start["开始接收SSE"] --> Read["读取响应块"]
 Read --> Decode["TextDecoder(stream=true) 解码"]
 Decode --> Buffer["追加到缓冲区"]
 Buffer --> Split["按\\n分割，保留最后一行"]
@@ -326,7 +326,7 @@ Done --> |是| Persist["持久化PRD内容并标记完成"]
 - [types/index.ts](file://prd-generator/src/types/index.ts#L194-L223)
 
 ### PRD 提示词与结构要求
-- PRD_SYSTEM_PROMPT 要求生成 8 大模块（产品概述、功能需求、UI/UX、技术架构建议、数据模型、技术实现要点、竞品分析、优化建议），并使用 Markdown 格式输出。
+- PRD_SYSTEM_PROMPT 要求生成 9 大模块（产品概述、目标与范围、用户与体验、功能需求、实现与架构、数据模型、接口与流程、非功能需求、风险与迭代），并特别强调突出用户提供的开发经验、功能需求和架构倾向等信息，使用 Markdown 格式输出。
 
 章节来源
 - [route.ts](file://prd-generator/src/app/api/generate-prd/route.ts#L90-L108)

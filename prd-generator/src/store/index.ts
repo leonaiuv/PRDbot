@@ -755,8 +755,26 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
     const persisted = await prdTasksDB.get(projectId);
     if (!persisted) return false;
     
+    // P4: 再次检查内存状态 - 在异步操作期间，可能有新任务启动
+    const latestTask = get().tasks[projectId];
+    if (latestTask?.phase === 'generating' && latestTask.abortController) {
+      // 新任务已经启动，不要恢复旧状态
+      return false;
+    }
+    
+    // P4: 如果新任务的 startTime 比持久化的更新，说明是新任务，不要恢复
+    if (latestTask && latestTask.startTime > persisted.startTime) {
+      return false;
+    }
+    
     // 如果是生成中状态，标记为错误（因为请求已中断）
     if (persisted.phase === 'generating') {
+      // P4: 最后一次检查 - 确保没有新任务正在运行
+      const finalCheck = get().tasks[projectId];
+      if (finalCheck?.phase === 'generating' && finalCheck.abortController) {
+        return false;
+      }
+      
       const task: PRDGenerationTask = {
         projectId: persisted.projectId,
         phase: 'error',
@@ -765,12 +783,24 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
         streamContent: persisted.streamContent,
         error: '生成过程中断，请重试',
       };
-      set(state => ({
-        tasks: {
-          ...state.tasks,
-          [projectId]: task,
-        },
-      }));
+      set(state => {
+        // P4: 在 set 内部再次检查，确保原子性
+        const currentTask = state.tasks[projectId];
+        if (currentTask?.phase === 'generating' && currentTask.abortController) {
+          // 新任务正在运行，不覆盖
+          return state;
+        }
+        if (currentTask && currentTask.startTime > persisted.startTime) {
+          // 新任务的时间戳更新，不覆盖
+          return state;
+        }
+        return {
+          tasks: {
+            ...state.tasks,
+            [projectId]: task,
+          },
+        };
+      });
       // 更新持久化状态
       await prdTasksDB.save({
         ...persisted,
@@ -782,19 +812,29 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
     
     // 其他状态直接恢复
     if (persisted.phase === 'error') {
-      set(state => ({
-        tasks: {
-          ...state.tasks,
-          [projectId]: {
-            projectId: persisted.projectId,
-            phase: persisted.phase,
-            startTime: persisted.startTime,
-            elapsedTime: persisted.elapsedTime,
-            streamContent: persisted.streamContent,
-            error: persisted.error,
+      set(state => {
+        // P4: 在 set 内部检查，防止覆盖新任务
+        const currentTask = state.tasks[projectId];
+        if (currentTask?.phase === 'generating' && currentTask.abortController) {
+          return state;
+        }
+        if (currentTask && currentTask.startTime > persisted.startTime) {
+          return state;
+        }
+        return {
+          tasks: {
+            ...state.tasks,
+            [projectId]: {
+              projectId: persisted.projectId,
+              phase: persisted.phase,
+              startTime: persisted.startTime,
+              elapsedTime: persisted.elapsedTime,
+              streamContent: persisted.streamContent,
+              error: persisted.error,
+            },
           },
-        },
-      }));
+        };
+      });
       return true;
     }
     
@@ -817,36 +857,36 @@ export const usePRDGenerationStore = create<PRDGenerationStore>((set, get) => ({
   },
 
   // 安全中断并保存（用于组件卸载时）
+  // P5: 改进逻辑 - 保留 generating 状态让恢复逻辑来决定是否标记为 error
   abortAndPersist: async (projectId: string) => {
     const task = get().tasks[projectId];
     if (!task) return;
-    
-    // 如果正在生成，中断请求
-    if (task.abortController && task.phase === 'generating') {
+
+    // 只有正在生成中才需要处理
+    if (task.phase !== 'generating') return;
+
+    // 中断请求
+    if (task.abortController) {
       task.abortController.abort();
     }
-    
-    // 保存当前进度（标记为中断错误）
+
+    // 保存当前进度，保留 generating 状态
+    // 让恢复逻辑来决定是否标记为 error
     await prdTasksDB.save({
       projectId: task.projectId,
-      phase: 'error',
+      phase: 'generating',  // P5: 保持 generating 状态
       startTime: task.startTime,
       elapsedTime: task.elapsedTime,
       streamContent: task.streamContent,
-      error: '生成过程中断，请重试',
     });
-    
-    // 更新内存状态
-    set(state => ({
-      tasks: {
-        ...state.tasks,
-        [projectId]: {
-          ...task,
-          phase: 'error',
-          error: '生成过程中断，请重试',
-          abortController: undefined,
-        },
-      },
-    }));
+
+    // 清除内存中的任务和 chunks
+    set(state => {
+      const newTasks = { ...state.tasks };
+      const newChunks = { ...state.contentChunks };
+      delete newTasks[projectId];
+      delete newChunks[projectId];
+      return { tasks: newTasks, contentChunks: newChunks };
+    });
   },
 }));

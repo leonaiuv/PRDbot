@@ -84,6 +84,8 @@ export default function PRDPage() {
   const editorContainerRef = useRef<HTMLDivElement>(null);
   const [editorHeight, setEditorHeight] = useState(400);
   const elapsedTimerRef = useRef<NodeJS.Timeout | null>(null);
+  // P4: 标记是否已经启动了生成任务，防止恢复逻辑覆盖
+  const generationStartedRef = useRef(false);
 
   // 从PRD任务状态获取生成中状态
   const isGenerating = prdTask?.phase === 'generating';
@@ -108,13 +110,33 @@ export default function PRDPage() {
   useEffect(() => {
     if (!mounted || !currentProject) return;
 
+    // P4: 如果已经启动了生成任务，不要执行恢复逻辑
+    if (generationStartedRef.current) return;
+
     // 如果内存中已有正在进行的生成任务，避免被误判为中断
     const activeTask = getTaskRef.current(projectId);
     if (activeTask?.phase === 'generating') return;
-    
+
     const checkAndRestoreTask = async () => {
+      // P4: 再次检查是否已启动生成
+      if (generationStartedRef.current) {
+        return;
+      }
+
       // 检查是否有持久化的中断任务
       const persisted = await loadPersistedTask(projectId);
+
+      // P4: 异步操作后再次检查
+      if (generationStartedRef.current) {
+        return;
+      }
+
+      // P5: 再次检查内存中是否已有新任务（可能在异步期间启动）
+      const currentTask = getTaskRef.current(projectId);
+      if (currentTask?.phase === 'generating') {
+        return;
+      }
+
       if (persisted && (persisted.phase === 'generating' || persisted.phase === 'error')) {
         // 再次检查是否已经启动了新的生成任务，避免竞态覆盖
         const latestTask = getTaskRef.current(projectId);
@@ -124,15 +146,26 @@ export default function PRDPage() {
 
         // P3: 边界条件修复 - 检查项目是否有完整内容
         // 使用更严格的判断：内容必须存在且有实质性内容（至少 50 个字符）
-        const hasValidContent = currentProject.prdContent && 
+        const hasValidContent = currentProject.prdContent &&
           currentProject.prdContent.trim().length > 50;
-        
+
         if (hasValidContent) {
           // 项目已有完整内容，说明上次生成实际成功了，清除错误状态
           await clearTask(projectId);
           return;
         }
-        
+
+        // P4: 恢复前最后一次检查
+        if (generationStartedRef.current) {
+          return;
+        }
+
+        // P5: 最终检查 - 确保没有新任务正在运行
+        const finalTask = getTaskRef.current(projectId);
+        if (finalTask?.phase === 'generating') {
+          return;
+        }
+
         // 恢复任务状态
         await restoreTask(projectId);
         if (persisted.phase === 'generating') {
@@ -140,7 +173,7 @@ export default function PRDPage() {
         }
       }
     };
-    
+
     checkAndRestoreTask();
   }, [mounted, projectId, currentProject, loadPersistedTask, restoreTask, clearTask]);
 
@@ -199,7 +232,11 @@ export default function PRDPage() {
 
   // 生成PRD文档
   const generatePRD = useCallback(async () => {
+    // P5: 最开始就设置标记，阻止恢复逻辑覆盖
+    generationStartedRef.current = true;
+
     if (!currentProject || !settings?.apiKeys[settings.defaultModel]) {
+      generationStartedRef.current = false;  // 重置标记
       toast.error('请先在设置中配置 API Key');
       return;
     }
@@ -208,7 +245,7 @@ export default function PRDPage() {
     const existingTask = getTask(projectId);
     if (existingTask?.phase === 'generating') {
       toast.info('PRD 正在生成中，请稍候...');
-      return;
+      return;  // 保持 generationStartedRef 为 true，因为确实有任务在运行
     }
 
     // 启动全局生成任务
@@ -748,11 +785,11 @@ ${currentProject.prdContent}
                       </div>
                       <p className="text-sm sm:text-base text-red-600 dark:text-red-400 mb-2">生成失败</p>
                       <p className="text-xs sm:text-sm text-muted-foreground mb-4">{prdTaskError}</p>
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        onClick={() => {
-                          clearTask(projectId);
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={async () => {
+                          await clearTask(projectId);
                           generatePRD();
                         }}
                         className="touch-feedback"
