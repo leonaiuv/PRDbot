@@ -4,18 +4,16 @@
 **本文引用的文件**
 - [AI分析工具组件](file://prd-generator/src/components/ai-analysis-tools.tsx)
 - [分析API路由](file://prd-generator/src/app/api/analyze/route.ts)
-- [聊天API路由](file://prd-generator/src/app/api/chat/route.ts)
-- [PRD生成API路由](file://prd-generator/src/app/api/generate-prd/route.ts)
-- [翻译API路由](file://prd-generator/src/app/api/translate/route.ts)
-- [聊天响应校验器](file://prd-generator/src/lib/validator.ts)
-- [通用工具函数](file://prd-generator/src/lib/utils.ts)
+- [图表校验器](file://prd-generator/src/lib/diagram-validator.ts)
 - [类型定义](file://prd-generator/src/types/index.ts)
-- [首页页面](file://prd-generator/src/app/page.tsx)
-- [对话摘要组件](file://prd-generator/src/components/conversation-summary.tsx)
-- [多语言PRD组件](file://prd-generator/src/components/multi-language-prd.tsx)
-- [包配置](file://prd-generator/package.json)
-- [项目说明](file://prd-generator/README.md)
 </cite>
+
+## 更新摘要
+**变更内容**
+- 为图表生成功能新增了校验、重试机制和降级提取功能
+- 增强了状态管理和用户反馈机制
+- 更新了AI分析工具组件以支持重试次数跟踪和加载状态显示
+- 新增了图表校验和降级处理逻辑
 
 ## 目录
 1. [简介](#简介)
@@ -92,7 +90,7 @@ Types --> API_Translate
 - [聊天API路由](file://prd-generator/src/app/api/chat/route.ts#L1-L360)
 - [PRD生成API路由](file://prd-generator/src/app/api/generate-prd/route.ts#L1-L258)
 - [翻译API路由](file://prd-generator/src/app/api/translate/route.ts#L1-L93)
-- [聊天响应校验器](file://prd-generator/src/lib/validator.ts#L1-L274)
+- [聊天响应校验器](file://prd-generator/src/lib/validator.ts#L94-L147)
 - [类型定义](file://prd-generator/src/types/index.ts#L1-L272)
 
 **章节来源**
@@ -155,7 +153,7 @@ C->>C : Markdown渲染并展示结果
 
 ```mermaid
 flowchart TD
-Start(["组件初始化"]) --> CheckContent["检查PRD内容是否为空"]
+Start["组件初始化"] --> CheckContent["检查PRD内容是否为空"]
 CheckContent --> |为空| ToastEmpty["提示：没有PRD内容可分析"]
 CheckContent --> |非空| CheckKey["检查API Key是否存在"]
 CheckKey --> |不存在| ToastKey["提示：请先配置 API Key"]
@@ -164,7 +162,7 @@ CallAPI --> RespOK{"响应是否成功"}
 RespOK --> |否| ToastErr["提示：分析失败"]
 RespOK --> |是| SaveRes["保存分析结果到对应标签页"]
 SaveRes --> Render["Markdown渲染并展示"]
-ToastEmpty --> End(["结束"])
+ToastEmpty --> End["结束"]
 ToastKey --> End
 ToastErr --> End
 Render --> End
@@ -209,6 +207,58 @@ R-->>C : JSON { content }
 
 **章节来源**
 - [分析API路由](file://prd-generator/src/app/api/analyze/route.ts#L1-L216)
+
+### 图表校验与重试机制
+- 功能概览
+  - 新增了对图表生成结果的严格校验机制，确保输出符合预定义的JSON格式。
+  - 实现了自动重试机制，当图表生成失败时最多重试2次。
+  - 提供了降级提取功能，当所有重试均失败时，尝试从原始内容中提取Mermaid代码块。
+- 核心流程
+  - **校验阶段**：使用Zod Schema校验JSON结构，验证Mermaid语法，检查禁止的样式定义。
+  - **重试阶段**：构建重试提示词，包含错误原因和正确格式示例，引导AI模型修正输出。
+  - **降级阶段**：从原始响应中提取Mermaid代码块作为备用方案，确保用户仍能获得部分结果。
+- 状态管理
+  - 前端组件跟踪重试次数并在加载状态中显示。
+  - 成功时显示"图表生成完成（重试X次后成功）"的提示。
+  - 失败时提供详细的错误信息和建议。
+
+```mermaid
+sequenceDiagram
+participant C as "AI分析工具组件"
+participant A as "分析API路由"
+participant V as "图表校验器"
+participant M as "大模型服务"
+C->>A : POST /api/analyze type=diagram
+A->>M : 调用模型API生成图表
+M-->>A : 返回JSON格式的图表数据
+A->>V : validateDiagramResponse校验
+alt 校验通过
+V-->>A : valid=true, data
+A-->>C : 返回Markdown格式图表
+else 校验失败
+V-->>A : valid=false, errors
+A->>A : retryCount++
+A->>M : 追加重试提示词重新请求
+M-->>A : 修正后的响应
+A->>V : 再次校验
+V-->>A : valid=true/false
+A->>A : retryCount >= MAX_RETRY_COUNT?
+alt 是
+A->>A : extractMermaidBlocksFromText降级提取
+A-->>C : 返回提取的Mermaid代码
+else
+A->>M : 继续重试
+end
+end
+```
+
+**图表来源**
+- [分析API路由](file://prd-generator/src/app/api/analyze/route.ts#L278-L349)
+- [图表校验器](file://prd-generator/src/lib/diagram-validator.ts#L132-L248)
+
+**章节来源**
+- [分析API路由](file://prd-generator/src/app/api/analyze/route.ts#L278-L349)
+- [图表校验器](file://prd-generator/src/lib/diagram-validator.ts#L132-L248)
 
 ### 聊天API路由（chat/route.ts）
 - 功能概览
@@ -296,7 +346,7 @@ GEN-->>UI : data : [DONE]
 
 ```mermaid
 flowchart TD
-Start(["组件初始化"]) --> LangSelect["选择目标语言"]
+Start["组件初始化"] --> LangSelect["选择目标语言"]
 LangSelect --> CheckPrd["检查PRD内容是否为空"]
 CheckPrd --> |为空| ToastPrd["提示：没有PRD内容可翻译"]
 CheckPrd --> |非空| CheckKey["检查API Key是否存在"]
@@ -305,7 +355,7 @@ CheckKey --> |存在| CallTrans["调用 /api/translate"]
 CallTrans --> RespOK{"响应是否成功"}
 RespOK --> |否| ToastErr["提示：翻译失败"]
 RespOK --> |是| Render["渲染翻译结果并提供复制/导出"]
-ToastPrd --> End(["结束"])
+ToastPrd --> End["结束"]
 ToastKey --> End
 ToastErr --> End
 Render --> End
@@ -391,11 +441,13 @@ Pkg --> LLM
   - “无效的模型配置”：检查模型ID是否在后端映射表中。
   - “API请求失败”：检查网络连通性、服务商状态与自定义URL白名单。
   - “未能从响应中提取到有效的JSON结构”：聊天路由的JSON输出不符合约束，需调整系统提示词或重试。
+  - “图表生成失败”：检查AI输出是否符合JSON格式要求，查看重试提示中的具体错误。
 - 建议排查步骤
   - 在浏览器开发者工具中查看Network面板，确认请求与响应状态码。
   - 检查后端日志输出，关注错误堆栈与参数打印。
   - 对于翻译与分析类问题，先单独验证 /api/translate 与 /api/analyze 的返回内容。
   - 若使用自定义URL，确认域名在白名单中且为HTTPS。
+  - 对于图表生成问题，检查响应内容是否包含正确的JSON结构或Mermaid代码块。
 
 **章节来源**
 - [聊天API路由](file://prd-generator/src/app/api/chat/route.ts#L222-L359)

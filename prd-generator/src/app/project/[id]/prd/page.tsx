@@ -96,6 +96,10 @@ export default function PRDPage() {
   const elapsedTimerRef = useRef<NodeJS.Timeout | null>(null);
   // P4: 标记是否已经启动了生成任务，防止恢复逻辑覆盖
   const generationStartedRef = useRef(false);
+  // P7: 请求锁 - 防止多次并发请求
+  const generationLockRef = useRef(false);
+  // P7: 当前活跃的请求 ID，用于防止旧请求写入状态
+  const activeRequestIdRef = useRef<string | null>(null);
 
   // 从 PRD 任务状态获取生成中状态
   const isGenerating = prdTask?.phase === 'generating';
@@ -282,25 +286,48 @@ export default function PRDPage() {
   }, [editMode]);
 
   // 自动生成PRD（仅当URL参数指示且没有已存在内容时）
+  // P7: 使用 ref 来避免闭包问题和不稳定依赖
+  const autoGenerateTriggeredRef = useRef(false);
   useEffect(() => {
+    // P7: 只触发一次，防止多次调用
+    if (autoGenerateTriggeredRef.current) return;
     if (!shouldGenerate || !currentProject || !settings) return;
     // 检查是否已有内容或正在生成
     if (currentProject.prdContent || isGenerating) return;
+    // 检查是否有锁
+    if (generationLockRef.current) return;
     // 检查是否有错误任务（不自动重试）
-    const task = getTask(projectId);
+    const task = getTaskRef.current(projectId);
     if (task?.phase === 'error') return;
     
+    // P7: 标记已触发，防止后续重复触发
+    autoGenerateTriggeredRef.current = true;
     generatePRD();
+  // 仅依赖必要的稳定值
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shouldGenerate, currentProject, settings, isGenerating, projectId, getTask]);
+  }, [shouldGenerate, mounted, currentProject?.id, currentProject?.prdContent, settings?.defaultModel, isGenerating, projectId]);
 
   // 生成PRD文档
   const generatePRD = useCallback(async () => {
+    // P7: 使用锁防止并发请求
+    if (generationLockRef.current) {
+      console.log('[generatePRD] 已有请求在进行中，跳过');
+      return;
+    }
+    
     // P5: 最开始就设置标记，阻止恢复逻辑覆盖
     generationStartedRef.current = true;
+    generationLockRef.current = true;
+    
+    // P7: 生成唯一请求 ID
+    const requestId = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    activeRequestIdRef.current = requestId;
+    console.log('[generatePRD] 开始生成，请求ID:', requestId);
 
     if (!currentProject || !settings?.apiKeys[settings.defaultModel]) {
-      generationStartedRef.current = false;  // 重置标记
+      generationStartedRef.current = false;
+      generationLockRef.current = false;
+      activeRequestIdRef.current = null;
       toast.error('请先在设置中配置 API Key');
       return;
     }
@@ -308,15 +335,17 @@ export default function PRDPage() {
     // 检查是否已有生成任务在进行中
     const existingTask = getTask(projectId);
     if (existingTask?.phase === 'generating') {
+      console.log('[generatePRD] 已有任务在生成中，跳过');
+      generationLockRef.current = false;
       toast.info('PRD 正在生成中，请稍候...');
-      return;  // 保持 generationStartedRef 为 true，因为确实有任务在运行
+      return;
     }
 
     // P6: 清除可能存在的旧状态，确保从干净状态开始
     await clearTask(projectId);
 
-    // 启动全局生成任务
-    startTask(projectId);
+    // 启动全局生成任务，获取 AbortController
+    const abortController = startTask(projectId);
 
     try {
       // 构建对话历史
@@ -324,6 +353,7 @@ export default function PRDPage() {
         .map(m => `${m.role === 'user' ? '用户' : 'AI'}: ${m.content}`)
         .join('\n\n');
 
+      // P7: 使用 AbortController 的 signal
       const response = await fetch('/api/generate-prd', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -333,8 +363,15 @@ export default function PRDPage() {
           apiKey: settings.apiKeys[settings.defaultModel],
           customApiUrl: settings.customApiUrl,
           customModelName: settings.customModelName
-        })
+        }),
+        signal: abortController.signal,
       });
+
+      // P7: 检查请求是否仍然有效（防止旧请求覆盖新请求的结果）
+      if (activeRequestIdRef.current !== requestId) {
+        console.log('[generatePRD] 请求已过期，丢弃结果:', requestId);
+        return;
+      }
 
       if (!response.ok) {
         const error = await response.json();
@@ -349,6 +386,13 @@ export default function PRDPage() {
       let sseBuffer = ''; // SSE分片缓冲，避免跨chunk截断
 
       while (true) {
+        // P7: 每次读取前检查是否仍是当前请求
+        if (activeRequestIdRef.current !== requestId) {
+          console.log('[generatePRD] 请求已被取代，停止读取:', requestId);
+          reader.cancel();
+          return;
+        }
+        
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -368,7 +412,10 @@ export default function PRDPage() {
             const { content } = JSON.parse(data);
             if (content) {
               fullContent += content;
-              appendTaskContent(projectId, content);
+              // P7: 只有当前请求才能更新状态
+              if (activeRequestIdRef.current === requestId) {
+                appendTaskContent(projectId, content);
+              }
             }
           } catch {
             // 忽略解析错误
@@ -384,12 +431,20 @@ export default function PRDPage() {
             const { content } = JSON.parse(data);
             if (content) {
               fullContent += content;
-              appendTaskContent(projectId, content);
+              if (activeRequestIdRef.current === requestId) {
+                appendTaskContent(projectId, content);
+              }
             }
           } catch {
             // 忽略解析错误
           }
         }
+      }
+
+      // P7: 最终保存前再次检查
+      if (activeRequestIdRef.current !== requestId) {
+        console.log('[generatePRD] 保存前检查：请求已过期，丢弃:', requestId);
+        return;
       }
 
       // 保存PRD内容
@@ -399,8 +454,15 @@ export default function PRDPage() {
       // 完成生成任务
       completeTask(projectId);
       toast.success('PRD 生成完成');
+      console.log('[generatePRD] 生成完成，请求ID:', requestId);
 
     } catch (error) {
+      // P7: 错误处理前检查是否仍是当前请求
+      if (activeRequestIdRef.current !== requestId) {
+        console.log('[generatePRD] 错误处理：请求已过期，忽略错误:', requestId);
+        return;
+      }
+      
       // 检查是否是取消操作
       if (error instanceof Error && error.name === 'AbortError') {
         toast.info('PRD 生成已取消');
@@ -412,6 +474,12 @@ export default function PRDPage() {
       const errorMessage = error instanceof Error ? error.message : 'PRD生成失败';
       errorTask(projectId, errorMessage);
       toast.error(errorMessage);
+    } finally {
+      // P7: 只有当前请求完成时才释放锁
+      if (activeRequestIdRef.current === requestId) {
+        generationLockRef.current = false;
+        activeRequestIdRef.current = null;
+      }
     }
   }, [currentProject, settings, projectId, getTask, startTask, appendTaskContent, completeTask, errorTask, clearTask, updatePRDContent, setProjectStatus]);
 

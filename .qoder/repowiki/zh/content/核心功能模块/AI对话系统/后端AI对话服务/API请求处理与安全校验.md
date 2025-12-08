@@ -4,9 +4,16 @@
 **本文引用的文件**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts)
 - [validator.ts](file://prd-generator/src/lib/validator.ts)
-- [generate-prd/route.ts](file://prd-generator/src/app/api/generate-prd/route.ts)
-- [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx)
+- [model-config.ts](file://prd-generator/src/lib/model-config.ts)
+- [translate/route.ts](file://prd-generator/src/app/api/translate/route.ts)
 </cite>
+
+## 更新摘要
+**变更内容**
+- 更新了自定义API URL校验机制，增加了对Azure OpenAI动态子域和企业代理模式的支持
+- 扩展了域名白名单，包含更多主流AI服务提供商
+- 详细说明了企业代理模式的警告机制
+- 更新了架构总览和安全校验流程图以反映最新变化
 
 ## 目录
 1. [简介](#简介)
@@ -31,8 +38,8 @@
 该功能位于 Next.js 应用的 app API 层，核心文件如下：
 - 聊天 API：/api/chat/route.ts
 - 响应校验与流式聚合：/lib/validator.ts
-- PRD 生成 API（对比参考）：/api/generate-prd/route.ts
-- 前端页面触发聊天请求：/app/project/[id]/chat/page.tsx
+- 模型配置管理：/lib/model-config.ts
+- 翻译 API（参考实现）：/api/translate/route.ts
 
 ```mermaid
 graph TB
@@ -41,39 +48,38 @@ FE["前端页面<br/>project/[id]/chat/page.tsx"]
 end
 subgraph "Next.js API 层"
 CHAT_ROUTE["/api/chat/route.ts<br/>POST /api/chat"]
-GEN_PRD_ROUTE["/api/generate-prd/route.ts<br/>POST /api/generate-prd"]
+TRANSLATE_ROUTE["/api/translate/route.ts<br/>POST /api/translate"]
 end
 subgraph "AI 服务"
 DEEPSEEK["DeepSeek API"]
 QWEN["Qwen API"]
 DOUBAO["Doubao API"]
 CUSTOM["自定义 API 端点"]
+AZURE["Azure OpenAI"]
+ENTERPRISE["企业代理网关"]
 end
 subgraph "工具库"
 VALIDATOR["validator.ts<br/>validateAIResponse/buildRetryPrompt/aggregateSSEStream"]
+MODEL_CONFIG["model-config.ts<br/>getModelConfig/getEndpoint/getDefaultModel"]
 end
 FE --> CHAT_ROUTE
 CHAT_ROUTE --> VALIDATOR
+CHAT_ROUTE --> MODEL_CONFIG
 CHAT_ROUTE --> DEEPSEEK
 CHAT_ROUTE --> QWEN
 CHAT_ROUTE --> DOUBAO
 CHAT_ROUTE --> CUSTOM
-GEN_PRD_ROUTE --> VALIDATOR
-GEN_PRD_ROUTE --> DEEPSEEK
-GEN_PRD_ROUTE --> QWEN
-GEN_PRD_ROUTE --> DOUBAO
-GEN_PRD_ROUTE --> CUSTOM
+CHAT_ROUTE --> AZURE
+CHAT_ROUTE --> ENTERPRISE
+TRANSLATE_ROUTE --> VALIDATOR
+TRANSLATE_ROUTE --> MODEL_CONFIG
 ```
 
-图表来源
+**图表来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L1-L120)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L1-L120)
-- [generate-prd/route.ts](file://prd-generator/src/app/api/generate-prd/route.ts#L1-L120)
-
-章节来源
-- [route.ts](file://prd-generator/src/app/api/chat/route.ts#L1-L120)
-- [validator.ts](file://prd-generator/src/lib/validator.ts#L1-L120)
-- [generate-prd/route.ts](file://prd-generator/src/app/api/generate-prd/route.ts#L1-L120)
+- [model-config.ts](file://prd-generator/src/lib/model-config.ts#L1-L120)
+- [translate/route.ts](file://prd-generator/src/app/api/translate/route.ts#L1-L120)
 
 ## 核心组件
 - 请求解析与校验：在路由层解析 JSON 请求体，校验 apiKey、messages、model 等字段
@@ -83,7 +89,7 @@ GEN_PRD_ROUTE --> CUSTOM
 - 流式响应与重试：调用 AI API 并聚合 SSE，失败时自动重试并构建重试提示词
 - 响应校验：validateAIResponse 使用 Zod Schema 校验 JSON 结构，buildRetryPrompt 生成重试提示
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L426)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L1-L147)
 
@@ -95,14 +101,19 @@ sequenceDiagram
 participant Client as "客户端"
 participant Route as "/api/chat/route.ts"
 participant Validator as "validator.ts"
+participant ModelConfig as "model-config.ts"
 participant AI as "AI 服务端点"
 Client->>Route : "POST /api/chat"
 Route->>Route : "解析请求体并校验必填字段"
 alt "model=custom"
 Route->>Route : "validateCustomApiUrl(url)"
+Route->>Route : "检查静态白名单"
+Route->>Route : "检查Azure OpenAI动态模式"
+Route->>Route : "检查企业代理模式"
 Route-->>Client : "400 错误校验失败"
 else "model=deepseek/qwen/doubao"
-Route->>Route : "选择内置端点"
+Route->>ModelConfig : "getModelConfig(model)"
+Route->>Route : "获取内置端点"
 end
 Route->>Validator : "callAIAndAggregate(endpoint, apiKey, model, requestMessages)"
 Validator->>AI : "POST /chat/completions (stream=true)"
@@ -122,9 +133,10 @@ end
 end
 ```
 
-图表来源
+**图表来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L426)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L149-L274)
+- [model-config.ts](file://prd-generator/src/lib/model-config.ts#L56-L68)
 
 ## 详细组件分析
 
@@ -134,7 +146,7 @@ end
 - 校验 messages 是否为数组；非数组返回 400
 - 校验 model 是否合法；非法返回 400
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L307)
 
 ### 动态端点选择与自定义 URL 校验
@@ -148,7 +160,7 @@ end
   - 不在白名单返回 400
 - 校验通过后使用 customApiUrl 作为最终端点
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L5-L12)
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L288-L307)
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L290-L307)
@@ -158,11 +170,13 @@ end
 - HTTPS 强制：协议必须为 https
 - 内网 IP/域名禁止：通过正则逐项匹配 localhost、127.x、10.x、172.16–172.31、192.168.x、0.x、169.254.x、IPv6::1、fc00:/fe80/ 等
 - 白名单校验：hostname 必须等于白名单域名或以白名单域名结尾
+- 新增 Azure OpenAI 动态子域支持：通过正则 `^[a-z0-9-]+\.openai\.azure\.com$` 匹配自定义资源名
+- 新增企业代理模式支持：通过正则匹配 `api.[a-z0-9-]+.corp.[a-z]+` 和 `llm.[a-z0-9-]+.[a-z]+` 等企业网关模式，匹配时发出警告但仍允许通过
 - 失败返回 400，错误信息包含具体原因
 
 ```mermaid
 flowchart TD
-Start(["进入 validateCustomApiUrl"]) --> CheckEmpty["检查 URL 是否为空"]
+Start["进入 validateCustomApiUrl"] --> CheckEmpty["检查 URL 是否为空"]
 CheckEmpty --> Empty{"为空?"}
 Empty --> |是| ReturnEmpty["返回错误: URL 为空"] --> End
 Empty --> |否| ParseURL["尝试解析 URL 对象"]
@@ -174,15 +188,23 @@ HTTPSOK --> |否| ReturnHTTPS["返回错误: 仅允许 HTTPS"] --> End
 HTTPSOK --> CheckPrivate["匹配内网/私有地址正则"]
 CheckPrivate --> Private{"命中内网规则?"}
 Private --> |是| ReturnPrivate["返回错误: 不允许访问内网地址"] --> End
-Private --> |否| CheckDomain["检查域名白名单"]
-CheckDomain --> Allowed{"在白名单中?"}
-Allowed --> |否| ReturnDomain["返回错误: 不在允许的域名白名单中"] --> End
-Allowed --> |是| ReturnOK["返回通过"]
-End(["结束"])
+Private --> |否| CheckStaticWhitelist["检查静态白名单"]
+CheckStaticWhitelist --> StaticAllowed{"在静态白名单中?"}
+StaticAllowed --> |是| ReturnOK["返回通过"]
+StaticAllowed --> |否| CheckAzure["检查Azure OpenAI动态模式"]
+CheckAzure --> AzureMatch{"匹配Azure模式?"}
+AzureMatch --> |是| ReturnOK
+AzureMatch --> |否| CheckEnterprise["检查企业代理模式"]
+CheckEnterprise --> EnterpriseMatch{"匹配企业代理模式?"}
+EnterpriseMatch --> |是| LogWarning["记录警告日志"] --> ReturnOK
+EnterpriseMatch --> |否| ReturnDomain["返回错误: 不在允许的域名白名单中"] --> End
+ReturnOK["返回通过"] --> End
+End["结束"]
 ```
 
-图表来源
-- [route.ts](file://prd-generator/src/app/api/chat/route.ts#L31-L82)
+**图表来源**
+- [translate/route.ts](file://prd-generator/src/app/api/translate/route.ts#L74-L80)
+- [translate/route.ts](file://prd-generator/src/app/api/translate/route.ts#L133-L142)
 
 ### requestMessages 合并与 SYSTEM_PROMPT
 - requestMessages 由两部分组成：
@@ -191,7 +213,7 @@ End(["结束"])
 - 合并顺序为：system 在前，随后是用户历史消息
 - 该结构用于后续 callAIAndAggregate 调用，作为模型输入
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L91-L114)
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L309-L314)
 
@@ -205,7 +227,7 @@ End(["结束"])
   - 使用 Zod Schema 校验 questions、meta 等字段
   - 返回结构化数据与原始文本内容，便于后续处理
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L221-L256)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L58-L147)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L218-L274)
@@ -220,7 +242,7 @@ End(["结束"])
   - 返回原始内容与错误列表，同时包含重试次数
   - 仍以 SSE 形式返回，便于前端统一处理
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L315-L417)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L189-L216)
 
@@ -233,7 +255,7 @@ End(["结束"])
   - customApiUrl：当 model=custom 时提供
 - 前端页面在 PRD 生成页也展示了类似的请求构造方式，便于对比
 
-章节来源
+**章节来源**
 - [page.tsx](file://prd-generator/src/app/project/[id]/chat/page.tsx#L312-L359)
 - [generate-prd/route.ts](file://prd-generator/src/app/api/generate-prd/route.ts#L151-L175)
 
@@ -241,29 +263,33 @@ End(["结束"])
 - 路由层依赖：
   - Next.js 的 NextRequest/NextResponse
   - validator.ts 中的 validateAIResponse、buildRetryPrompt、aggregateSSEStream
+  - model-config.ts 中的 getModelConfig
 - 工具库依赖：
   - Zod：用于结构化 JSON 校验
   - URL 构造函数：用于自定义 URL 安全校验
 - 外部依赖：
   - 各 AI 服务端点（deepseek/qwen/doubao/custom）
+  - Azure OpenAI 端点
+  - 企业代理网关
 
 ```mermaid
 graph LR
 ROUTE["/api/chat/route.ts"] --> VALIDATOR["validator.ts"]
+ROUTE --> MODEL_CONFIG["model-config.ts"]
 ROUTE --> DEEPSEEK["DeepSeek 端点"]
 ROUTE --> QWEN["Qwen 端点"]
 ROUTE --> DOUBAO["Doubao 端点"]
 ROUTE --> CUSTOM["自定义端点"]
+ROUTE --> AZURE["Azure OpenAI"]
+ROUTE --> ENTERPRISE["企业代理网关"]
 VALIDATOR --> ZOD["Zod Schema"]
+MODEL_CONFIG --> CONFIG["MODEL_CONFIGS"]
 ```
 
-图表来源
+**图表来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L1-L120)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L1-L40)
-
-章节来源
-- [route.ts](file://prd-generator/src/app/api/chat/route.ts#L1-L120)
-- [validator.ts](file://prd-generator/src/lib/validator.ts#L1-L40)
+- [model-config.ts](file://prd-generator/src/lib/model-config.ts#L25-L49)
 
 ## 性能考虑
 - 流式响应：通过 SSE 逐步返回增量内容，减少首屏等待
@@ -282,12 +308,14 @@ VALIDATOR --> ZOD["Zod Schema"]
   - 确保 URL 为 https
   - 确保域名在白名单中
   - 避免使用内网地址（127.0.0.1、192.168.x、localhost 等）
+  - 对于 Azure OpenAI，确保格式为 `{resource-name}.openai.azure.com`
+  - 对于企业代理，确保域名符合 `api.*.corp.*` 或 `llm.*.*` 模式
 - AI 服务调用失败（500）：检查端点可达性、密钥有效性、网络代理
 - 校验失败重试多次仍未通过：查看返回的 validationErrors，按提示修正内容格式
 
-章节来源
+**章节来源**
 - [route.ts](file://prd-generator/src/app/api/chat/route.ts#L257-L426)
 - [validator.ts](file://prd-generator/src/lib/validator.ts#L91-L147)
 
 ## 结论
-/api/chat 的 POST 请求处理流程具备完善的请求解析、安全校验、动态端点选择、流式响应与重试机制。validateCustomApiUrl 通过 HTTPS 强制、内网禁止与域名白名单三重保障，有效防范 SSRF 攻击。requestMessages 将 SYSTEM_PROMPT 与用户历史合并，为 AI 提供一致、可控的输入。整体设计兼顾安全性、可扩展性与易用性，适合在生产环境中稳定运行。
+/api/chat 的 POST 请求处理流程具备完善的请求解析、安全校验、动态端点选择、流式响应与重试机制。validateCustomApiUrl 通过 HTTPS 强制、内网禁止与域名白名单三重保障，有效防范 SSRF 攻击。requestMessages 将 SYSTEM_PROMPT 与用户历史合并，为 AI 提供一致、可控的输入。整体设计兼顾安全性、可扩展性与易用性，适合在生产环境中稳定运行。新增的 Azure OpenAI 动态子域支持和企业代理模式处理，进一步增强了系统的灵活性和企业级适用性。

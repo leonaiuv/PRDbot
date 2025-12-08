@@ -6,7 +6,7 @@
   "jest.showCoverageOnLoad": true,
   "jest.runMode": "watch",
   "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": true
+    "source.fixAll.eslint": "explicit"
   },
   "testing.automaticallyOpenPeekView": "failureInVisibleDocument"
 }
